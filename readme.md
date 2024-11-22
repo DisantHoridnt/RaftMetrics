@@ -3,6 +3,14 @@
 ## Overview
 This project is a basic distributed analytics system implemented in Rust. It demonstrates key distributed systems concepts such as fault tolerance, data partitioning, and distributed computation while maintaining a focused and concise design.
 
+## libraries:
+- `tokio`: Async runtime and concurrency.
+- https://github.com/tikv/raft-rs
+- `axum`: HTTP server implementation.
+- `serde`: Data serialization and deserialization.
+- `bincode`: Efficient binary data transmission.
+- `tracing`: Logging and debugging.
+
 ## Features
 - **Distributed Architecture**:
   - A single control node handles HTTP requests.
