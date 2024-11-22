@@ -11,6 +11,7 @@ services:
       - NODE_ROLE=control
       - CONTROL_HOST=control
       - WORKER_HOSTS=worker1:8081,worker2:8082
+      - PORT=8080
     networks:
       raft_network:
         aliases:
@@ -30,6 +31,7 @@ services:
       - RAFT_ID=1
       - RAFT_CLUSTER=worker1:8081,worker2:8082
       - DB_PATH=/data/worker1.duckdb
+      - PORT=8081
     volumes:
       - worker1_data:/data
     networks:
@@ -53,6 +55,7 @@ services:
       - RAFT_ID=2
       - RAFT_CLUSTER=worker1:8081,worker2:8082
       - DB_PATH=/data/worker2.duckdb
+      - PORT=8082
     volumes:
       - worker2_data:/data
     networks:
