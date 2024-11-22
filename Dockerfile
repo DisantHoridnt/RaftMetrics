@@ -1,4 +1,4 @@
-FROM rust:1.70.0 as builder
+FROM rust:1.70.0 AS builder
 
 # Install DuckDB dependencies
 RUN apt-get update && apt-get install -y \
