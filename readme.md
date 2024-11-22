@@ -201,3 +201,193 @@ cargo run --bin worker -- --id 2 --port 8082
 - Proper networking between services is configured
 - Centralized logging is enabled
 - Environment variables can be adjusted per deployment
+
+# RaftMetrics: Distributed Analytics System
+
+A robust, scalable distributed analytics platform built with Rust, implementing microservices architecture with Raft consensus and advanced monitoring capabilities.
+
+## Features
+
+### Core Functionality
+- Distributed data processing with hash-based partitioning
+- Raft consensus for reliable data replication
+- Microservices architecture with control and worker nodes
+- Persistent storage using DuckDB
+- Dynamic service discovery
+- RESTful API endpoints for data ingestion and querying
+
+### Observability
+- Structured logging with contextual information
+- Prometheus metrics for system monitoring
+- Health check endpoints
+- Performance tracking and timing metrics
+
+### Reliability
+- Raft consensus for fault tolerance
+- Leader election and failover
+- Configuration change handling
+- Comprehensive error handling
+- Worker health monitoring
+
+## Architecture
+
+### Components
+1. Control Node
+   - Routes incoming metrics
+   - Aggregates worker metrics
+   - Monitors worker health
+   - Manages Raft consensus
+   - Handles service discovery
+
+2. Worker Nodes
+   - Store metrics data in DuckDB
+   - Process local computations
+   - Participate in Raft consensus
+   - Provide health status
+
+### Technology Stack
+- **Language**: Rust (latest stable)
+- **Web Framework**: Axum
+- **Async Runtime**: Tokio
+- **Database**: DuckDB
+- **Consensus**: Raft
+- **Logging**: Slog
+- **Metrics**: Prometheus
+- **Containerization**: Docker
+
+## API Endpoints
+
+### Control Node
+```
+POST /metrics      - Insert new metrics
+GET  /aggregate    - Get aggregated metrics
+GET  /health      - Check system health
+```
+
+### Worker Node
+```
+POST /insert      - Insert data point
+POST /compute     - Compute local metrics
+GET  /health      - Check worker health
+```
+
+## Metrics & Monitoring
+
+### Node Metrics
+- Node up/down status
+- Leader status
+- Storage size
+- Operation counts
+
+### Request Metrics
+- Request counts
+- Request durations
+- Error rates
+- Round-trip times
+
+### Raft Metrics
+- Proposal success/failure rates
+- Election events
+- Consensus timing
+- State changes
+
+## Configuration
+
+### Environment Variables
+```bash
+# Required
+NODE_ROLE=control|worker    # Node role
+NODE_ID=<number>           # Unique node identifier
+PORT=<number>              # Service port
+
+# Optional
+DB_PATH=/path/to/db        # DuckDB file path
+WORKER_HOSTS=host1,host2   # Comma-separated worker hosts
+CONTROL_HOST=host          # Control node address
+```
+
+## Development
+
+### Prerequisites
+- Rust 1.70+
+- Docker & Docker Compose
+- DuckDB
+
+### Building
+```bash
+# Build the project
+cargo build --release
+
+# Run tests
+cargo test
+
+# Build Docker image
+docker build -t raftmetrics .
+```
+
+### Running Locally
+```bash
+# Start the system
+docker-compose up -d
+
+# Scale workers
+docker-compose up -d --scale worker=3
+```
+
+### Testing
+```bash
+# Unit tests
+cargo test
+
+# Integration tests
+cargo test --test '*'
+
+# Manual testing via Postman
+# Import the provided collection: RaftMetrics.postman_collection.json
+```
+
+## Project Structure
+```
+├── Cargo.toml           # Dependencies
+├── Dockerfile          # Multi-stage build
+├── docker-compose.yml  # Service orchestration
+└── src/
+    ├── main.rs         # Entry point
+    ├── lib.rs          # Core library
+    ├── api/            # API implementations
+    │   ├── control.rs  # Control node
+    │   └── worker.rs   # Worker node
+    ├── raft/           # Raft consensus
+    │   ├── node.rs     # Raft node
+    │   └── storage.rs  # Raft storage
+    ├── logging.rs      # Logging setup
+    └── metrics.rs      # Metrics tracking
+```
+
+## Error Handling
+- Custom error types for different failure modes
+- Contextual error reporting
+- Structured error logging
+- Proper error propagation
+
+## Security Considerations
+- Docker network isolation
+- Environment-based configuration
+- Minimal external exposure
+- No hardcoded secrets
+
+## Contributing
+1. Fork the repository
+2. Create your feature branch
+3. Commit your changes
+4. Push to the branch
+5. Create a Pull Request
+
+## License
+MIT License - see LICENSE file for details
+
+## Acknowledgments
+- Rust community
+- Raft consensus algorithm
+- DuckDB team
+- Axum framework

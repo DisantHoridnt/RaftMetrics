@@ -1,87 +1,237 @@
-use axum::{Router, routing::post, extract::Json, response::IntoResponse, http::StatusCode};
-use std::{sync::Arc, env};
+use axum::{
+    Router,
+    routing::{post, get},
+    extract::Json,
+    response::IntoResponse,
+    http::StatusCode,
+};
 use tokio::sync::Mutex;
+use std::{sync::Arc, env, collections::HashMap, time::Instant};
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use crate::partitioning::get_partition;
+use slog::{Logger, info, warn, error};
 
-#[derive(Debug, Deserialize)]
-pub struct InsertRequest {
-    partition_key: String,
+use crate::{
+    hash_partition,
+    metrics::{self, RequestTimer},
+    Error, Result,
+};
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct MetricData {
+    key: String,
     value: f64,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct AggregateResponse {
+    total_average: f64,
+    total_count: i64,
+}
+
 pub struct ControlNode {
-    workers: Vec<String>,
+    id: u64,
+    worker_hosts: Vec<String>,
+    http_client: Client,
+    logger: Logger,
 }
 
 impl ControlNode {
-    pub fn new() -> Self {
+    pub fn new(id: u64, logger: Logger) -> Self {
         let worker_hosts = env::var("WORKER_HOSTS")
-            .unwrap_or_else(|_| "worker1:8081,worker2:8082".to_string());
-        
-        let workers = worker_hosts
+            .unwrap_or_else(|_| "http://worker1:8081,http://worker2:8082".to_string())
             .split(',')
-            .map(|host| format!("http://{}", host.trim()))
+            .map(String::from)
             .collect();
 
-        Self { workers }
+        info!(logger, "Initializing control node";
+            "node_id" => id,
+            "worker_hosts" => format!("{:?}", worker_hosts)
+        );
+
+        metrics::init_metrics();
+
+        Self {
+            id,
+            worker_hosts,
+            http_client: Client::new(),
+            logger,
+        }
     }
 
-    async fn route_request(&self, key: &str, value: f64) -> Result<(), Box<dyn std::error::Error>> {
-        let partition = get_partition(key, self.workers.len());
-        let worker_url = &self.workers[partition];
+    pub async fn distribute_data(&self, data: MetricData) -> Result<()> {
+        let _timer = RequestTimer::new();
+        let start = Instant::now();
+
+        let worker_idx = hash_partition(&data.key, self.worker_hosts.len());
+        let worker_url = format!("{}/insert", self.worker_hosts[worker_idx]);
         
-        let client = reqwest::Client::new();
-        let response = client
-            .post(format!("{}/insert", worker_url))
-            .json(&InsertRequest {
-                partition_key: key.to_string(),
-                value,
-            })
+        info!(self.logger, "Distributing data";
+            "key" => &data.key,
+            "worker_url" => &worker_url
+        );
+
+        let response = self.http_client
+            .post(&worker_url)
+            .json(&data)
             .send()
-            .await?;
+            .await
+            .map_err(|e| Error::InvalidRequest(e.to_string()))?;
 
         if !response.status().is_success() {
-            return Err("Worker request failed".into());
+            let error_msg = format!("Worker request failed with status: {}", response.status());
+            error!(self.logger, "Distribution failed"; "error" => &error_msg);
+            metrics::record_proposal_failure();
+            return Err(Error::InvalidRequest(error_msg));
         }
 
+        metrics::record_proposal();
+        metrics::record_raft_rtt(start.elapsed().as_secs_f64());
+        
+        Ok(())
+    }
+
+    pub async fn aggregate_metrics(&self) -> Result<AggregateResponse> {
+        let _timer = RequestTimer::new();
+        
+        info!(self.logger, "Aggregating metrics from workers");
+
+        let mut total_sum = 0.0;
+        let mut total_count = 0;
+
+        for host in &self.worker_hosts {
+            let worker_url = format!("{}/compute", host);
+            
+            match self.http_client
+                .post(&worker_url)
+                .send()
+                .await
+                .map_err(|e| Error::InvalidRequest(e.to_string()))?
+                .json::<HashMap<String, f64>>()
+                .await
+            {
+                Ok(response) => {
+                    if let (Some(&avg), Some(&count)) = (response.get("average"), response.get("count")) {
+                        total_sum += avg * count;
+                        total_count += count as i64;
+                    }
+                }
+                Err(e) => {
+                    warn!(self.logger, "Failed to get metrics from worker"; 
+                        "worker_url" => worker_url,
+                        "error" => %e
+                    );
+                }
+            }
+        }
+
+        let total_average = if total_count > 0 {
+            total_sum / total_count as f64
+        } else {
+            0.0
+        };
+
+        let response = AggregateResponse {
+            total_average,
+            total_count,
+        };
+
+        info!(self.logger, "Aggregation complete";
+            "total_average" => response.total_average,
+            "total_count" => response.total_count
+        );
+
+        Ok(response)
+    }
+
+    pub async fn check_worker_health(&self) -> Result<()> {
+        for host in &self.worker_hosts {
+            let health_url = format!("{}/health", host);
+            match self.http_client.get(&health_url).send().await {
+                Ok(response) if response.status().is_success() => {
+                    info!(self.logger, "Worker healthy"; "worker_url" => host);
+                }
+                Ok(response) => {
+                    warn!(self.logger, "Worker unhealthy";
+                        "worker_url" => host,
+                        "status" => response.status().as_u16()
+                    );
+                }
+                Err(e) => {
+                    error!(self.logger, "Worker health check failed";
+                        "worker_url" => host,
+                        "error" => %e
+                    );
+                }
+            }
+        }
         Ok(())
     }
 }
 
-pub async fn start_control_node() {
+pub async fn start_control_node(logger: Logger) {
     let port = env::var("PORT")
         .unwrap_or_else(|_| "8080".to_string())
         .parse()
         .unwrap_or(8080);
 
-    let state = Arc::new(Mutex::new(ControlNode::new()));
+    let node_id = env::var("NODE_ID")
+        .unwrap_or_else(|_| "1".to_string())
+        .parse()
+        .unwrap_or(1);
+
+    let node = Arc::new(Mutex::new(ControlNode::new(node_id, logger.clone())));
 
     let app = Router::new()
-        .route("/insert", post(insert_handler))
-        .route("/analytics", post(analytics_handler))
-        .with_state(state);
+        .route("/metrics", post(insert_metric))
+        .route("/aggregate", get(aggregate_metrics))
+        .route("/health", get(health_check))
+        .with_state(node);
 
-    println!("Control node starting on port {}", port);
-
+    info!(logger, "Control node starting"; "port" => port);
+    
     axum::Server::bind(&format!("0.0.0.0:{}", port).parse().unwrap())
         .serve(app.into_make_service())
         .await
         .unwrap();
 }
 
-async fn insert_handler(
-    state: axum::extract::State<Arc<Mutex<ControlNode>>>,
-    Json(request): Json<InsertRequest>,
+async fn insert_metric(
+    State(node): axum::extract::State<Arc<Mutex<ControlNode>>>,
+    Json(data): Json<MetricData>,
 ) -> impl IntoResponse {
-    let node = state.lock().await;
-    match node.route_request(&request.partition_key, request.value).await {
+    let node = node.lock().await;
+    match node.distribute_data(data).await {
         Ok(_) => StatusCode::OK,
-        Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        Err(e) => {
+            error!(node.logger, "Metric insertion failed"; "error" => %e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
     }
 }
 
-async fn analytics_handler() -> impl IntoResponse {
-    // Implementation to collect and aggregate data from worker nodes
-    StatusCode::NOT_IMPLEMENTED
+async fn aggregate_metrics(
+    State(node): axum::extract::State<Arc<Mutex<ControlNode>>>,
+) -> impl IntoResponse {
+    let node = node.lock().await;
+    match node.aggregate_metrics().await {
+        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
+        Err(e) => {
+            error!(node.logger, "Metrics aggregation failed"; "error" => %e);
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
+async fn health_check(
+    State(node): axum::extract::State<Arc<Mutex<ControlNode>>>,
+) -> impl IntoResponse {
+    let node = node.lock().await;
+    match node.check_worker_health().await {
+        Ok(_) => StatusCode::OK,
+        Err(e) => {
+            error!(node.logger, "Health check failed"; "error" => %e);
+            StatusCode::SERVICE_UNAVAILABLE
+        }
+    }
 }
