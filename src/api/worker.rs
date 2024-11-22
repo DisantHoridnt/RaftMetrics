@@ -1,7 +1,7 @@
 use axum::{
     Router,
     routing::post,
-    extract::{Extension, Json},
+    extract::{Extension, Json, State},
     response::IntoResponse,
     http::StatusCode,
 };
@@ -10,7 +10,7 @@ use duckdb::{Connection, Result as DuckResult};
 use std::{sync::Arc, env};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct InsertData {
     partition_key: String,
     value: f64,
@@ -36,7 +36,10 @@ impl WorkerNode {
             .unwrap_or(1);
 
         let conn = Connection::open(&db_path)?;
-        conn.execute("CREATE TABLE IF NOT EXISTS data (partition_key TEXT, value DOUBLE);")?;
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS data (partition_key TEXT, value DOUBLE);",
+            [],
+        )?;
         
         Ok(Self { 
             db: conn,
@@ -47,7 +50,7 @@ impl WorkerNode {
     pub async fn insert(&self, data: InsertData) -> DuckResult<()> {
         self.db.execute(
             "INSERT INTO data (partition_key, value) VALUES (?, ?);",
-            &[&data.partition_key, &data.value],
+            [data.partition_key.as_str(), &data.value.to_string()],
         )?;
         Ok(())
     }
@@ -81,7 +84,7 @@ pub async fn start_worker_node() {
     let app = Router::new()
         .route("/insert", post(insert_handler))
         .route("/compute", post(compute_handler))
-        .layer(Extension(node));
+        .with_state(node);
 
     println!("Worker node starting on port {}", port);
     
@@ -92,7 +95,7 @@ pub async fn start_worker_node() {
 }
 
 async fn insert_handler(
-    Extension(node): Extension<Arc<Mutex<WorkerNode>>>,
+    State(node): axum::extract::State<Arc<Mutex<WorkerNode>>>,
     Json(data): Json<InsertData>,
 ) -> impl IntoResponse {
     let node = node.lock().await;
@@ -103,7 +106,7 @@ async fn insert_handler(
 }
 
 async fn compute_handler(
-    Extension(node): Extension<Arc<Mutex<WorkerNode>>>,
+    State(node): axum::extract::State<Arc<Mutex<WorkerNode>>>,
 ) -> impl IntoResponse {
     let node = node.lock().await;
     match node.compute_average().await {

@@ -12,3 +12,9 @@ pub mod partitioning {
         (hasher.finish() as usize) % num_partitions
     }
 }
+
+pub fn hash_partition(key: &str, num_partitions: usize) -> usize {
+    // Simple hash function using sum of bytes
+    let hash: u64 = key.bytes().map(|b| b as u64).sum();
+    (hash % num_partitions as u64) as usize
+}
