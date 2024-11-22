@@ -64,6 +64,340 @@ This project is a basic distributed analytics system implemented in Rust. It dem
   - `total_nodes`: Total nodes in the system.
   - `responding_nodes`: Number of nodes that responded.
 
+## API Reference
+
+### Authentication
+
+All API endpoints require authentication using a Bearer token:
+
+```http
+Authorization: Bearer your-auth-token
+```
+
+Rate limiting is applied per token:
+- 1000 requests per minute for control node
+- 5000 requests per minute for worker nodes
+
+### Query Parameters
+
+#### Time Range Parameters
+- `from`: Start timestamp (ISO 8601)
+- `to`: End timestamp (ISO 8601)
+- `window`: Time window for aggregation (e.g., "1h", "1d")
+
+Examples:
+```http
+# Last 24 hours
+GET /aggregate?metric=cpu_usage&window=1h
+
+# Custom range with specific timestamps
+GET /aggregate?metric=cpu_usage&from=2024-01-20T00:00:00Z&to=2024-01-20T23:59:59Z
+
+# Rolling window
+GET /aggregate?metric=cpu_usage&window=1h&rolling=true
+```
+
+#### Filtering Parameters
+- `tags`: Filter by metadata tags
+- `hosts`: Filter by specific hosts
+- `datacenters`: Filter by datacenters
+
+Examples:
+```http
+# Filter by datacenter
+GET /aggregate?metric=cpu_usage&datacenters=us-west,us-east
+
+# Filter by tags
+GET /aggregate?metric=cpu_usage&tags=environment:prod,service:api
+
+# Filter by hosts with wildcards
+GET /aggregate?metric=cpu_usage&hosts=web-*,api-*
+```
+
+#### Aggregation Parameters
+- `agg`: Aggregation functions (avg, min, max, sum, count, p50, p95, p99)
+- `group_by`: Group results by field
+- `order_by`: Sort results
+- `limit`: Limit number of results
+
+Examples:
+```http
+# Multiple aggregations
+GET /aggregate?metric=cpu_usage&agg=avg,max,p95
+
+# Group by datacenter and host
+GET /aggregate?metric=cpu_usage&group_by=datacenter,host
+
+# Top 10 hosts by CPU usage
+GET /aggregate?metric=cpu_usage&group_by=host&order_by=value:desc&limit=10
+```
+
+### Control Node API
+
+#### Insert Metrics
+```http
+POST /metrics
+Content-Type: application/json
+
+{
+    "key": "cpu_usage",
+    "value": 75.5,
+    "timestamp": "2024-01-20T15:30:00Z",
+    "tags": {
+        "host": "server-1",
+        "datacenter": "us-west"
+    }
+}
+```
+
+Response:
+```json
+{
+    "success": true,
+    "message": "Metric inserted successfully",
+    "worker_node": "worker-2"
+}
+```
+
+#### Get Aggregated Metrics
+```http
+GET /aggregate?metric=cpu_usage&from=2024-01-20T00:00:00Z&to=2024-01-20T23:59:59Z
+```
+
+Response:
+```json
+{
+    "metric": "cpu_usage",
+    "aggregations": {
+        "avg": 68.5,
+        "min": 45.2,
+        "max": 92.1,
+        "count": 1440,
+        "p95": 85.3
+    },
+    "by_datacenter": {
+        "us-west": {
+            "avg": 70.2,
+            "count": 720
+        },
+        "us-east": {
+            "avg": 66.8,
+            "count": 720
+        }
+    }
+}
+```
+
+#### Health Check
+```http
+GET /health
+```
+
+Response:
+```json
+{
+    "status": "healthy",
+    "uptime": "2d 15h 30m",
+    "worker_nodes": {
+        "total": 3,
+        "healthy": 3
+    },
+    "raft_status": {
+        "role": "leader",
+        "term": 5,
+        "last_log_index": 1205
+    }
+}
+```
+
+### Worker Node API
+
+#### Insert Data
+```http
+POST /insert
+Content-Type: application/json
+
+{
+    "partition_key": "cpu_usage",
+    "value": 75.5,
+    "timestamp": "2024-01-20T15:30:00Z",
+    "metadata": {
+        "host": "server-1",
+        "datacenter": "us-west"
+    }
+}
+```
+
+Response:
+```json
+{
+    "success": true,
+    "partition": 2,
+    "storage_size": "1.2GB"
+}
+```
+
+#### Compute Local Metrics
+```http
+POST /compute
+Content-Type: application/json
+
+{
+    "metric": "cpu_usage",
+    "aggregations": ["avg", "max", "p95"],
+    "time_window": {
+        "from": "2024-01-20T00:00:00Z",
+        "to": "2024-01-20T23:59:59Z"
+    },
+    "group_by": ["datacenter"]
+}
+```
+
+Response:
+```json
+{
+    "results": {
+        "avg": 68.5,
+        "max": 92.1,
+        "p95": 85.3
+    },
+    "groups": {
+        "us-west": {
+            "avg": 70.2,
+            "max": 92.1,
+            "p95": 86.1
+        }
+    },
+    "computation_time_ms": 250
+}
+```
+
+#### Health Check
+```http
+GET /health
+```
+
+Response:
+```json
+{
+    "status": "healthy",
+    "uptime": "2d 15h 30m",
+    "storage": {
+        "total_size": "1.2GB",
+        "free_space": "10.8GB"
+    },
+    "raft_status": {
+        "role": "follower",
+        "term": 5,
+        "leader_id": "node-1",
+        "last_heartbeat": "2024-01-20T15:29:58Z"
+    }
+}
+```
+
+### Error Responses
+
+All endpoints return standard error responses in the following format:
+
+```json
+{
+    "error": true,
+    "code": "INVALID_REQUEST",
+    "message": "Invalid metric key format",
+    "details": {
+        "field": "key",
+        "constraint": "must match pattern ^[a-zA-Z0-9_.-]+$"
+    }
+}
+```
+
+Common error codes:
+- `INVALID_REQUEST`: Malformed request or invalid parameters
+- `NOT_FOUND`: Requested resource not found
+- `INTERNAL_ERROR`: Server-side error
+- `RAFT_ERROR`: Consensus-related error
+- `STORAGE_ERROR`: Database or storage-related error
+
+## Error Handling
+
+#### Validation Errors
+```json
+{
+    "error": true,
+    "code": "VALIDATION_ERROR",
+    "message": "Invalid request parameters",
+    "details": {
+        "fields": [
+            {
+                "field": "from",
+                "error": "must be a valid ISO 8601 timestamp"
+            },
+            {
+                "field": "window",
+                "error": "must be one of: 1m, 5m, 1h, 1d"
+            }
+        ]
+    }
+}
+```
+
+#### Authentication Errors
+```json
+{
+    "error": true,
+    "code": "AUTH_ERROR",
+    "message": "Invalid or expired authentication token",
+    "details": {
+        "token_status": "expired",
+        "expires_at": "2024-01-20T00:00:00Z"
+    }
+}
+```
+
+#### Rate Limit Errors
+```json
+{
+    "error": true,
+    "code": "RATE_LIMIT_EXCEEDED",
+    "message": "Too many requests",
+    "details": {
+        "limit": 1000,
+        "window": "1m",
+        "reset_at": "2024-01-20T15:31:00Z"
+    }
+}
+```
+
+#### Raft Consensus Errors
+```json
+{
+    "error": true,
+    "code": "RAFT_ERROR",
+    "message": "Failed to achieve consensus",
+    "details": {
+        "term": 5,
+        "required_nodes": 3,
+        "available_nodes": 2,
+        "retry_after": "5s"
+    }
+}
+```
+
+#### Storage Errors
+```json
+{
+    "error": true,
+    "code": "STORAGE_ERROR",
+    "message": "Failed to write data",
+    "details": {
+        "storage_type": "duckdb",
+        "operation": "insert",
+        "reason": "disk_full",
+        "available_space": "100MB"
+    }
+}
+```
+
 ## Testing with Postman
 
 ### 1. Insert Data (via Control Node)
@@ -72,6 +406,7 @@ Method: POST
 URL: http://localhost:8080/insert
 Headers: 
   Content-Type: application/json
+  Authorization: Bearer your-auth-token
 Body:
 {
     "partition_key": "user123",
@@ -85,6 +420,7 @@ Method: POST
 URL: http://localhost:8081/insert
 Headers: 
   Content-Type: application/json
+  Authorization: Bearer your-auth-token
 Body:
 {
     "partition_key": "user123",
@@ -98,6 +434,7 @@ Method: POST
 URL: http://localhost:8082/insert
 Headers: 
   Content-Type: application/json
+  Authorization: Bearer your-auth-token
 Body:
 {
     "partition_key": "user456",
@@ -111,6 +448,7 @@ Method: POST
 URL: http://localhost:8081/compute
 Headers: 
   Content-Type: application/json
+  Authorization: Bearer your-auth-token
 Response:
 {
     "average": 42.5,

@@ -1,0 +1,297 @@
+{
+  "info": {
+    "name": "RaftMetrics API",
+    "description": "API collection for testing the RaftMetrics distributed analytics system locally.\n\nPrerequisites:\n1. Start the system: docker-compose up -d\n2. Import this collection\n3. Import and select the 'RaftMetrics Local' environment\n4. The auth_token is automatically set to match docker-compose.yml\n\nAvailable Endpoints:\n- Control Node: http://localhost:8080\n- Worker 1: http://localhost:8081\n- Worker 2: http://localhost:8082",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{auth_token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "item": [
+    {
+      "name": "Control Node",
+      "item": [
+        {
+          "name": "Insert Single Metric",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{control_host}}/metrics",
+              "host": ["{{control_host}}"],
+              "path": ["metrics"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"key\": \"cpu_usage\",\n  \"value\": 75.5,\n  \"timestamp\": \"2024-01-20T15:30:00Z\",\n  \"tags\": {\n    \"host\": \"server-1\",\n    \"datacenter\": \"us-west\"\n  }\n}"
+            },
+            "description": "Insert a single metric into the system via the control node"
+          }
+        },
+        {
+          "name": "Insert Batch Metrics",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{control_host}}/metrics/batch",
+              "host": ["{{control_host}}"],
+              "path": ["metrics", "batch"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"metrics\": [\n    {\n      \"key\": \"cpu_usage\",\n      \"value\": 75.5,\n      \"timestamp\": \"2024-01-20T15:30:00Z\",\n      \"tags\": {\"host\": \"server-1\"}\n    },\n    {\n      \"key\": \"memory_usage\",\n      \"value\": 85.2,\n      \"timestamp\": \"2024-01-20T15:30:00Z\",\n      \"tags\": {\"host\": \"server-1\"}\n    }\n  ]\n}"
+            },
+            "description": "Insert multiple metrics in a single request via the control node"
+          }
+        },
+        {
+          "name": "Get Simple Aggregation",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{control_host}}/aggregate?metric=cpu_usage&window=1h",
+              "host": ["{{control_host}}"],
+              "path": ["aggregate"],
+              "query": [
+                {
+                  "key": "metric",
+                  "value": "cpu_usage"
+                },
+                {
+                  "key": "window",
+                  "value": "1h"
+                }
+              ]
+            },
+            "description": "Get simple metric aggregation for the last hour from all workers"
+          }
+        },
+        {
+          "name": "Get Complex Aggregation",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{control_host}}/aggregate?metric=cpu_usage&from=2024-01-20T00:00:00Z&to=2024-01-20T23:59:59Z&window=1h&agg=avg,max,p95&group_by=datacenter,host&tags=environment:prod&order_by=max:desc&limit=10",
+              "host": ["{{control_host}}"],
+              "path": ["aggregate"],
+              "query": [
+                {
+                  "key": "metric",
+                  "value": "cpu_usage"
+                },
+                {
+                  "key": "from",
+                  "value": "2024-01-20T00:00:00Z"
+                },
+                {
+                  "key": "to",
+                  "value": "2024-01-20T23:59:59Z"
+                },
+                {
+                  "key": "window",
+                  "value": "1h"
+                },
+                {
+                  "key": "agg",
+                  "value": "avg,max,p95"
+                },
+                {
+                  "key": "group_by",
+                  "value": "datacenter,host"
+                },
+                {
+                  "key": "tags",
+                  "value": "environment:prod"
+                },
+                {
+                  "key": "order_by",
+                  "value": "max:desc"
+                },
+                {
+                  "key": "limit",
+                  "value": "10"
+                }
+              ]
+            },
+            "description": "Get complex metric aggregation with multiple parameters from all workers"
+          }
+        },
+        {
+          "name": "Control Node Health",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{control_host}}/health",
+              "host": ["{{control_host}}"],
+              "path": ["health"]
+            },
+            "description": "Check control node health status and worker connectivity"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Worker 1",
+      "item": [
+        {
+          "name": "Insert Data",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{worker1_host}}/insert",
+              "host": ["{{worker1_host}}"],
+              "path": ["insert"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"partition_key\": \"cpu_usage\",\n  \"value\": 75.5,\n  \"timestamp\": \"2024-01-20T15:30:00Z\",\n  \"metadata\": {\n    \"host\": \"server-1\",\n    \"datacenter\": \"us-west\"\n  }\n}"
+            },
+            "description": "Insert data directly into worker 1 (port 8081)"
+          }
+        },
+        {
+          "name": "Compute Local Metrics",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{worker1_host}}/compute",
+              "host": ["{{worker1_host}}"],
+              "path": ["compute"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"metric\": \"cpu_usage\",\n  \"aggregations\": [\"avg\", \"max\", \"p95\"],\n  \"time_window\": {\n    \"from\": \"2024-01-20T00:00:00Z\",\n    \"to\": \"2024-01-20T23:59:59Z\"\n  },\n  \"group_by\": [\"datacenter\"]\n}"
+            },
+            "description": "Compute metrics for data in worker 1"
+          }
+        },
+        {
+          "name": "Worker 1 Health",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{worker1_host}}/health",
+              "host": ["{{worker1_host}}"],
+              "path": ["health"]
+            },
+            "description": "Check worker 1 health status"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Worker 2",
+      "item": [
+        {
+          "name": "Insert Data",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{worker2_host}}/insert",
+              "host": ["{{worker2_host}}"],
+              "path": ["insert"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"partition_key\": \"cpu_usage\",\n  \"value\": 75.5,\n  \"timestamp\": \"2024-01-20T15:30:00Z\",\n  \"metadata\": {\n    \"host\": \"server-1\",\n    \"datacenter\": \"us-west\"\n  }\n}"
+            },
+            "description": "Insert data directly into worker 2 (port 8082)"
+          }
+        },
+        {
+          "name": "Compute Local Metrics",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{worker2_host}}/compute",
+              "host": ["{{worker2_host}}"],
+              "path": ["compute"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"metric\": \"cpu_usage\",\n  \"aggregations\": [\"avg\", \"max\", \"p95\"],\n  \"time_window\": {\n    \"from\": \"2024-01-20T00:00:00Z\",\n    \"to\": \"2024-01-20T23:59:59Z\"\n  },\n  \"group_by\": [\"datacenter\"]\n}"
+            },
+            "description": "Compute metrics for data in worker 2"
+          }
+        },
+        {
+          "name": "Worker 2 Health",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{worker2_host}}/health",
+              "host": ["{{worker2_host}}"],
+              "path": ["health"]
+            },
+            "description": "Check worker 2 health status"
+          }
+        }
+      ]
+    }
+  ],
+  "event": [],
+  "variable": [
+    {
+      "key": "control_host",
+      "value": "http://localhost:8080",
+      "type": "string"
+    },
+    {
+      "key": "worker1_host",
+      "value": "http://localhost:8081",
+      "type": "string"
+    },
+    {
+      "key": "worker2_host",
+      "value": "http://localhost:8082",
+      "type": "string"
+    },
+    {
+      "key": "auth_token",
+      "value": "your-auth-token-here",
+      "type": "string"
+    }
+  ]
+}

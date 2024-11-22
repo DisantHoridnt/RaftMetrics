@@ -9,59 +9,56 @@ services:
     environment:
       - RUST_LOG=info
       - NODE_ROLE=control
-      - CONTROL_HOST=control
-      - WORKER_HOSTS=worker1:8081,worker2:8082
+      - NODE_ID=1
       - PORT=8080
+      - AUTH_TOKEN=local-dev-token-123
+      - WORKER_HOSTS=worker-1:8081,worker-2:8082
     networks:
-      raft_network:
-        aliases:
-          - control
+      - raftnet
 
-  worker1:
+  worker-1:
     build: .
-    command: RaftMetrics worker --id 1 --port 8081
+    command: RaftMetrics worker --id 2 --port 8081
     ports:
       - "8081:8081"
     environment:
       - RUST_LOG=info
       - NODE_ROLE=worker
-      - NODE_ID=1
-      - CONTROL_HOST=control:8080
-      - WORKER_HOSTS=worker1:8081,worker2:8082
-      - RAFT_ID=1
-      - RAFT_CLUSTER=worker1:8081,worker2:8082
-      - DB_PATH=/data/worker1.duckdb
+      - NODE_ID=2
       - PORT=8081
+      - AUTH_TOKEN=local-dev-token-123
+      - CONTROL_HOST=control:8080
+      - WORKER_HOSTS=worker-1:8081,worker-2:8082
+      - RAFT_ID=2
+      - RAFT_CLUSTER=worker-1:8081,worker-2:8082
+      - DB_PATH=/data/worker1.duckdb
     volumes:
       - worker1_data:/data
     networks:
-      raft_network:
-        aliases:
-          - worker1
+      - raftnet
     depends_on:
       - control
 
-  worker2:
+  worker-2:
     build: .
-    command: RaftMetrics worker --id 2 --port 8082
+    command: RaftMetrics worker --id 3 --port 8082
     ports:
       - "8082:8082"
     environment:
       - RUST_LOG=info
       - NODE_ROLE=worker
-      - NODE_ID=2
-      - CONTROL_HOST=control:8080
-      - WORKER_HOSTS=worker1:8081,worker2:8082
-      - RAFT_ID=2
-      - RAFT_CLUSTER=worker1:8081,worker2:8082
-      - DB_PATH=/data/worker2.duckdb
+      - NODE_ID=3
       - PORT=8082
+      - AUTH_TOKEN=local-dev-token-123
+      - CONTROL_HOST=control:8080
+      - WORKER_HOSTS=worker-1:8081,worker-2:8082
+      - RAFT_ID=3
+      - RAFT_CLUSTER=worker-1:8081,worker-2:8082
+      - DB_PATH=/data/worker2.duckdb
     volumes:
       - worker2_data:/data
     networks:
-      raft_network:
-        aliases:
-          - worker2
+      - raftnet
     depends_on:
       - control
 
@@ -72,5 +69,5 @@ volumes:
     driver: local
 
 networks:
-  raft_network:
+  raftnet:
     driver: bridge
