@@ -63,3 +63,67 @@ This project is a basic distributed analytics system implemented in Rust. It dem
   - `is_partial`: Boolean indicating if the result is partial due to node failures.
   - `total_nodes`: Total nodes in the system.
   - `responding_nodes`: Number of nodes that responded.
+
+## Running the System
+
+### Using Docker Compose
+
+```bash
+# Build and start all services
+docker-compose up --build
+
+# Scale worker nodes (optional)
+docker-compose up --scale worker=3
+```
+
+The system will start with:
+- Control node on port 8080
+- Worker1 on port 8081
+- Worker2 on port 8082
+
+### Manual Running
+To run the services manually:
+
+1. Start the control node:
+```bash
+cargo run --bin distributed_analytics_system
+```
+
+2. Start worker nodes:
+```bash
+cargo run --bin worker -- --id 1 --port 8081
+cargo run --bin worker -- --id 2 --port 8082
+```
+
+## Project Structure
+```
+├── Cargo.toml           # Project dependencies and configuration
+├── Dockerfile          # Multi-stage Docker build
+├── docker-compose.yml  # Service orchestration
+└── src/
+    ├── main.rs         # Control node entry point
+    ├── worker.rs       # Worker node entry point
+    ├── lib.rs          # Library and partitioning logic
+    ├── api/
+    │   ├── mod.rs      # API module organization
+    │   ├── control.rs  # Control node implementation
+    │   └── worker.rs   # Worker node implementation
+    └── raft/
+        ├── mod.rs      # Raft module organization
+        ├── node.rs     # Raft node setup
+        └── storage.rs  # Raft storage implementation
+```
+
+## Development
+- The system uses a multi-stage Dockerfile for optimal image size
+- Docker Compose provides easy service orchestration
+- Each service has logging enabled via `RUST_LOG=info`
+- Hot reloading can be added for development
+- Network isolation is handled via Docker networks
+
+## Production Considerations
+- The Docker setup is production-ready with minimal image size
+- Easy to scale worker nodes horizontally
+- Proper networking between services is configured
+- Centralized logging is enabled
+- Environment variables can be adjusted per deployment

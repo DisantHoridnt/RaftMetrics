@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  control:
+    build: .
+    command: distributed_analytics_system
+    ports:
+      - "8080:8080"
+    environment:
+      - RUST_LOG=info
+    networks:
+      - raft_network
+
+  worker1:
+    build: .
+    command: distributed_analytics_system worker --id 1 --port 8081
+    ports:
+      - "8081:8081"
+    environment:
+      - RUST_LOG=info
+    networks:
+      - raft_network
+    depends_on:
+      - control
+
+  worker2:
+    build: .
+    command: distributed_analytics_system worker --id 2 --port 8082
+    ports:
+      - "8082:8082"
+    environment:
+      - RUST_LOG=info
+    networks:
+      - raft_network
+    depends_on:
+      - control
+
+networks:
+  raft_network:
+    driver: bridge

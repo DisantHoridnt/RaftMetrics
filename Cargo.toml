@@ -12,3 +12,11 @@ tracing = "0.1"
 tracing-subscriber = "0.3"
 duckdb = "0.6"
 raft = "0.7"
+
+[[bin]]
+name = "distributed_analytics_system"
+path = "src/main.rs"
+
+[[bin]]
+name = "worker"
+path = "src/worker.rs"
