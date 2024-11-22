@@ -3,37 +3,70 @@ version: '3.8'
 services:
   control:
     build: .
-    command: distributed_analytics_system
+    command: RaftMetrics
     ports:
       - "8080:8080"
     environment:
       - RUST_LOG=info
+      - NODE_ROLE=control
+      - CONTROL_HOST=control
+      - WORKER_HOSTS=worker1:8081,worker2:8082
     networks:
-      - raft_network
+      raft_network:
+        aliases:
+          - control
 
   worker1:
     build: .
-    command: distributed_analytics_system worker --id 1 --port 8081
+    command: RaftMetrics worker --id 1 --port 8081
     ports:
       - "8081:8081"
     environment:
       - RUST_LOG=info
+      - NODE_ROLE=worker
+      - NODE_ID=1
+      - CONTROL_HOST=control:8080
+      - WORKER_HOSTS=worker1:8081,worker2:8082
+      - RAFT_ID=1
+      - RAFT_CLUSTER=worker1:8081,worker2:8082
+      - DB_PATH=/data/worker1.duckdb
+    volumes:
+      - worker1_data:/data
     networks:
-      - raft_network
+      raft_network:
+        aliases:
+          - worker1
     depends_on:
       - control
 
   worker2:
     build: .
-    command: distributed_analytics_system worker --id 2 --port 8082
+    command: RaftMetrics worker --id 2 --port 8082
     ports:
       - "8082:8082"
     environment:
       - RUST_LOG=info
+      - NODE_ROLE=worker
+      - NODE_ID=2
+      - CONTROL_HOST=control:8080
+      - WORKER_HOSTS=worker1:8081,worker2:8082
+      - RAFT_ID=2
+      - RAFT_CLUSTER=worker1:8081,worker2:8082
+      - DB_PATH=/data/worker2.duckdb
+    volumes:
+      - worker2_data:/data
     networks:
-      - raft_network
+      raft_network:
+        aliases:
+          - worker2
     depends_on:
       - control
+
+volumes:
+  worker1_data:
+    driver: local
+  worker2_data:
+    driver: local
 
 networks:
   raft_network:
