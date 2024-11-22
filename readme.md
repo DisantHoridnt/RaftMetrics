@@ -64,6 +64,80 @@ This project is a basic distributed analytics system implemented in Rust. It dem
   - `total_nodes`: Total nodes in the system.
   - `responding_nodes`: Number of nodes that responded.
 
+## Testing with Postman
+
+### 1. Insert Data (via Control Node)
+```
+Method: POST
+URL: http://localhost:8080/insert
+Headers: 
+  Content-Type: application/json
+Body:
+{
+    "partition_key": "user123",
+    "value": 42.5
+}
+```
+
+### 2. Insert Data (Worker 1)
+```
+Method: POST
+URL: http://localhost:8081/insert
+Headers: 
+  Content-Type: application/json
+Body:
+{
+    "partition_key": "user123",
+    "value": 42.5
+}
+```
+
+### 3. Insert Data (Worker 2)
+```
+Method: POST
+URL: http://localhost:8082/insert
+Headers: 
+  Content-Type: application/json
+Body:
+{
+    "partition_key": "user456",
+    "value": 37.8
+}
+```
+
+### 4. Compute Analytics
+```
+Method: POST
+URL: http://localhost:8081/compute
+Headers: 
+  Content-Type: application/json
+Response:
+{
+    "average": 42.5,
+    "count": 1
+}
+```
+
+### Testing Flow
+1. Start the system:
+   ```bash
+   docker-compose up --build
+   ```
+
+2. Insert data through the control node:
+   - This will automatically route data to the appropriate worker based on the partition key
+   - You can verify the routing by checking compute results on different workers
+
+3. Query individual workers:
+   - Use the compute endpoint to see what data each worker has
+   - This helps verify that the partitioning is working correctly
+
+4. Expected Behavior:
+   - Same partition_key should always route to the same worker
+   - Different partition_keys may route to different workers
+   - Each worker maintains its own data set
+   - Compute results show only the data stored in that specific worker
+
 ## Running the System
 
 ### Using Docker Compose
