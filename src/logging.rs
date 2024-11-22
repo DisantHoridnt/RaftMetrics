@@ -31,3 +31,22 @@ pub fn get_metrics_logger() -> Logger {
         ),
     )
 }
+
+use tracing::{info, Level};
+use tracing_subscriber::FmtSubscriber;
+
+pub fn init() {
+    let subscriber = FmtSubscriber::builder()
+        .with_max_level(Level::INFO)
+        .with_target(false)
+        .with_thread_ids(true)
+        .with_file(true)
+        .with_line_number(true)
+        .pretty()
+        .try_init();
+
+    match subscriber {
+        Ok(_) => info!("Logger initialized successfully"),
+        Err(e) => eprintln!("Failed to initialize logger: {}", e),
+    }
+}

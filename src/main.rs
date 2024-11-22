@@ -1,5 +1,5 @@
 use std::env;
-use raft_metrics::{
+use distributed_analytics_system::{
     api::{control, worker},
     logging,
     metrics,
@@ -21,15 +21,11 @@ async fn main() {
 
     // Start node based on role
     match node_role.as_str() {
-        "control" => {
-            control::start_control_node(logger).await;
-        }
         "worker" => {
-            worker::start_worker_node(logger).await;
+            worker::start_worker_node().await;
         }
         _ => {
-            eprintln!("Invalid NODE_ROLE. Must be 'control' or 'worker'");
-            std::process::exit(1);
+            control::start_control_node().await;
         }
     }
 }

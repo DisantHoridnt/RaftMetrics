@@ -1,64 +1,59 @@
+use protobuf::Message;
 use raft::{
-    eraftpb::Entry,
-    Storage, Result as RaftResult,
-    Error as RaftError,
+    prelude::*,
+    storage::Storage,
     StorageError,
-    RaftState,
-    snapshot::{Snapshot, SnapshotMetadata},
+    GetEntriesContext,
 };
 use std::{
-    sync::{Arc, RwLock},
-    collections::HashMap,
+    cmp,
+    sync::Mutex,
 };
 
-#[derive(Clone)]
-pub struct MemStorage {
-    state: Arc<RwLock<InnerState>>,
-}
+use crate::RaftMetricsError;
 
-struct InnerState {
-    hard_state: raft::eraftpb::HardState,
-    snapshot_metadata: SnapshotMetadata,
-    entries: Vec<Entry>,
-    snapshot: Snapshot,
+#[derive(Debug)]
+pub struct MemStorage {
+    hard_state: Mutex<HardState>,
+    snapshot: Mutex<Snapshot>,
+    entries: Mutex<Vec<Entry>>,
 }
 
 impl MemStorage {
     pub fn new() -> Self {
         MemStorage {
-            state: Arc::new(RwLock::new(InnerState {
-                hard_state: Default::default(),
-                snapshot_metadata: Default::default(),
-                entries: vec![],
-                snapshot: Default::default(),
-            })),
+            hard_state: Mutex::new(HardState::default()),
+            snapshot: Mutex::new(Snapshot::default()),
+            entries: Mutex::new(vec![]),
         }
     }
 
-    pub fn append(&self, entries: Vec<Entry>) -> RaftResult<()> {
-        if entries.is_empty() {
-            return Ok(());
+    pub fn compute_size(&self) -> u64 {
+        let mut size = 0;
+
+        // Add size of entries
+        let entries = self.entries.lock().unwrap();
+        for entry in entries.iter() {
+            size += entry.compute_size() as u64;
         }
 
-        let mut state = self.state.write().unwrap();
-        state.entries.extend_from_slice(&entries);
-        Ok(())
-    }
+        // Add size of hard state
+        let hard_state = self.hard_state.lock().unwrap();
+        size += hard_state.compute_size() as u64;
 
-    pub fn set_hard_state(&self, hs: raft::eraftpb::HardState) -> RaftResult<()> {
-        let mut state = self.state.write().unwrap();
-        state.hard_state = hs;
-        Ok(())
+        // Add size of snapshot
+        let snapshot = self.snapshot.lock().unwrap();
+        size += snapshot.compute_size() as u64;
+
+        size
     }
 }
 
 impl Storage for MemStorage {
-    fn initial_state(&self) -> RaftResult<RaftState> {
-        let state = self.state.read().unwrap();
-        Ok(RaftState {
-            hard_state: state.hard_state.clone(),
-            conf_state: Default::default(),
-        })
+    fn initial_state(&self) -> raft::Result<RaftState> {
+        let hard_state = self.hard_state.lock().unwrap().clone();
+        let conf_state = self.snapshot.lock().unwrap().get_metadata().get_conf_state().clone();
+        Ok(RaftState { hard_state, conf_state })
     }
 
     fn entries(
@@ -66,68 +61,62 @@ impl Storage for MemStorage {
         low: u64,
         high: u64,
         max_size: impl Into<Option<u64>>,
-    ) -> RaftResult<Vec<Entry>> {
-        let state = self.state.read().unwrap();
-        if low < state.snapshot_metadata.index {
-            return Err(StorageError::Compacted.into());
-        }
-
-        if high > state.entries.len() as u64 + state.snapshot_metadata.index {
-            return Err(StorageError::Unavailable.into());
-        }
-
-        let offset = state.snapshot_metadata.index;
-        let lo = (low - offset) as usize;
-        let hi = (high - offset) as usize;
-        
-        let mut entries = state.entries[lo..hi].to_vec();
+        context: GetEntriesContext,
+    ) -> raft::Result<Vec<Entry>> {
         let max_size = max_size.into();
-        if let Some(max_size) = max_size {
-            let mut size = 0;
-            let mut truncate_idx = entries.len();
-            for (i, e) in entries.iter().enumerate() {
-                size += e.compute_size() as u64;
-                if size > max_size {
-                    truncate_idx = i;
+        let entries = self.entries.lock().unwrap();
+        let offset = entries.first().map_or(0, |e| e.index);
+        let low = low.checked_sub(offset).ok_or(raft::Error::Store(
+            StorageError::Compacted,
+        ))?;
+        let high = high.checked_sub(offset).ok_or(raft::Error::Store(
+            StorageError::Compacted,
+        ))?;
+        let high = cmp::min(high, entries.len() as u64);
+        let mut result = Vec::with_capacity(high as usize - low as usize);
+        let mut size = 0;
+        for i in low..high {
+            let entry = &entries[i as usize];
+            size += entry.compute_size() as u64;
+            if let Some(max) = max_size {
+                if size > max {
                     break;
                 }
             }
-            entries.truncate(truncate_idx);
+            result.push(entry.clone());
         }
-        Ok(entries)
+        Ok(result)
     }
 
-    fn term(&self, idx: u64) -> RaftResult<u64> {
-        let state = self.state.read().unwrap();
-        if idx == state.snapshot_metadata.index {
-            return Ok(state.snapshot_metadata.term);
-        }
-
-        let offset = state.snapshot_metadata.index;
+    fn term(&self, idx: u64) -> raft::Result<u64> {
+        let entries = self.entries.lock().unwrap();
+        let offset = entries.first().map_or(0, |e| e.index);
         if idx < offset {
-            return Err(StorageError::Compacted.into());
+            return Err(raft::Error::Store(StorageError::Compacted));
         }
-
-        if idx > offset + state.entries.len() as u64 - 1 {
-            return Err(StorageError::Unavailable.into());
+        if idx - offset >= entries.len() as u64 {
+            return Err(raft::Error::Store(StorageError::Unavailable));
         }
-
-        Ok(state.entries[(idx - offset) as usize].term)
+        Ok(entries[(idx - offset) as usize].term)
     }
 
-    fn first_index(&self) -> RaftResult<u64> {
-        let state = self.state.read().unwrap();
-        Ok(state.snapshot_metadata.index + 1)
+    fn first_index(&self) -> raft::Result<u64> {
+        let entries = self.entries.lock().unwrap();
+        Ok(entries.first().map_or(1, |e| e.index))
     }
 
-    fn last_index(&self) -> RaftResult<u64> {
-        let state = self.state.read().unwrap();
-        Ok(state.snapshot_metadata.index + state.entries.len() as u64)
+    fn last_index(&self) -> raft::Result<u64> {
+        let entries = self.entries.lock().unwrap();
+        Ok(entries.last().map_or(0, |e| e.index))
     }
 
-    fn snapshot(&self, request_index: u64) -> RaftResult<Snapshot> {
-        let state = self.state.read().unwrap();
-        Ok(state.snapshot.clone())
+    fn snapshot(&self, request_index: u64, to: u64) -> raft::Result<Snapshot> {
+        let snapshot = self.snapshot.lock().unwrap().clone();
+        let meta = snapshot.get_metadata();
+        if request_index <= meta.get_index() {
+            return Ok(snapshot);
+        }
+        Err(raft::Error::Store(StorageError::Unavailable))
     }
 }
 
