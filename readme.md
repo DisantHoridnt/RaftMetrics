@@ -60,10 +60,6 @@ Content-Type: application/json
     "metric_name": "cpu_usage",
     "value": 75.5,
     "timestamp": "2024-01-20T15:30:00Z",
-    "tags": {
-        "host": "server-1",
-        "datacenter": "us-west"
-    }
 }
 ```
 

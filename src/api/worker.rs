@@ -1,5 +1,5 @@
 use axum::{
-    extract::State,
+    extract::{State, Path},
     response::IntoResponse,
     routing::{get, post},
     Json, Router,
@@ -73,14 +73,14 @@ async fn process_metric(
 
 async fn get_metric(
     State(state): State<WorkerState>,
-    metric_name: String,
+    Path(name): Path<String>,
 ) -> Result<impl IntoResponse, RaftMetricsError> {
-    info!("Retrieving metric: {}", metric_name);
+    info!("Retrieving metric: {}", name);
     
-    let value = state.metrics.get_metric(&metric_name).await?;
+    let value = state.metrics.get_metric(&name).await?;
     
     Ok(Json(serde_json::json!({
-        "metric_name": metric_name,
+        "metric_name": name,
         "value": value
     })))
 }
