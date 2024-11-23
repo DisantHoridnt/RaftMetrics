@@ -3,6 +3,71 @@
 ## Overview
 This project is a basic distributed analytics system implemented in Rust. It demonstrates key distributed systems concepts such as fault tolerance, data partitioning, and distributed computation while maintaining a focused and concise design.
 
+## Quick Start with Docker Compose
+
+### Prerequisites
+- Docker
+- Docker Compose
+- Postman (for testing)
+
+### Running the Stack
+1. Clone the repository
+2. Navigate to the project directory
+3. Start the stack:
+```bash
+docker-compose up -d
+```
+
+This will start:
+- Control Node (http://localhost:8080)
+- Worker Node 1 (http://localhost:8081)
+- Worker Node 2 (http://localhost:8082)
+
+### Testing with Postman
+
+#### Authentication
+All requests require the following header:
+```
+Authorization: Bearer local-dev-token-123
+```
+
+#### 1. Health Check Endpoints
+Test if all nodes are running:
+
+Control Node:
+```http
+GET http://localhost:8080/health
+```
+
+Worker Nodes:
+```http
+GET http://localhost:8081/health
+GET http://localhost:8082/health
+```
+
+#### 2. Metrics Management
+Record a metric:
+```http
+POST http://localhost:8080/metrics
+Content-Type: application/json
+
+{
+    "metric_name": "cpu_usage",
+    "value": 75.5
+}
+```
+
+Get a specific metric:
+```http
+GET http://localhost:8080/metrics/cpu_usage
+```
+
+### Monitoring and Troubleshooting
+- View logs: `docker-compose logs -f`
+- View specific service logs: `docker-compose logs -f control`
+- Restart services: `docker-compose restart`
+- Stop stack: `docker-compose down`
+
 ## libraries:
 - `tokio`: Async runtime and concurrency.
 - https://github.com/tikv/raft-rs
