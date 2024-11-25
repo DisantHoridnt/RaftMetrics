@@ -1,27 +1,33 @@
 use axum::{
     extract::{State, Path},
+    response::IntoResponse,
     routing::{get, post},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tracing::{info, debug};
+use std::collections::HashMap;
+use tokio::sync::mpsc;
+use tracing::info;
+use tokio::net::TcpListener;
+use std::env;
+use chrono;
 
 use crate::{
     Result,
     RaftMetricsError,
-    metrics::MetricsRegistry,
-    raft::storage::MemStorage,
-    partitioning::get_partition,
-    api::worker::{WorkerMetricResponse, MetricAggregateResponse},
+    metrics::{MetricsRegistry, MetricOperation},
+    raft::{
+        node::{RaftNode, run_raft_node},
+        storage::MemStorage,
+    },
 };
 
 #[derive(Clone)]
 pub struct ControlState {
     pub storage: Arc<MemStorage>,
     pub metrics: Arc<MetricsRegistry>,
-    pub worker_urls: Arc<Vec<String>>,
-    pub http_client: Arc<reqwest::Client>,
+    pub proposal_tx: mpsc::Sender<Vec<u8>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -32,24 +38,16 @@ pub struct MetricRequest {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct MetricResponse {
-    pub success: bool,
-    pub message: String,
+    pub name: String,
+    pub value: f64,
+    pub timestamp: i64,
 }
 
-pub fn control_router(state: ControlState) -> Router {
+async fn control_router() -> Router {
     Router::new()
-        .route("/health", get(health_check))
         .route("/metrics", post(record_metric))
         .route("/metrics/:name", get(get_metric))
         .route("/metrics/:name/aggregate", get(get_metric_aggregate))
-        .with_state(state)
-}
-
-async fn health_check() -> impl axum::response::IntoResponse {
-    Json(serde_json::json!({
-        "status": "healthy",
-        "message": "Control node is operational"
-    }))
 }
 
 async fn record_metric(
@@ -57,120 +55,109 @@ async fn record_metric(
     Json(request): Json<MetricRequest>,
 ) -> Result<Json<MetricResponse>> {
     info!("Recording metric: {} = {}", request.metric_name, request.value);
-    
-    let worker_count = state.worker_urls.len();
-    info!("Total workers: {}", worker_count);
-    
-    let partition = get_partition(&request.metric_name, worker_count);
-    let worker_url = &state.worker_urls[partition];
-    debug!("Metric '{}' hashed to partition {} ({})", request.metric_name, partition, worker_url);
-    
-    let response = state.http_client.post(&format!("{}/process", worker_url))
-        .json(&request)
-        .send()
-        .await
-        .map_err(|e| RaftMetricsError::Internal(format!("Failed to forward request to worker: {}", e)))?;
-        
-    if !response.status().is_success() {
-        let error_text = response.text().await
-            .unwrap_or_else(|_| "Unknown error".to_string());
-        return Err(RaftMetricsError::Internal(format!("Worker failed to process metric: {}", error_text)));
-    }
+
+    // Create Raft operation
+    let operation = MetricOperation::Record {
+        name: request.metric_name.clone(),
+        value: request.value,
+    };
+
+    // Serialize operation
+    let data = MetricsRegistry::serialize_operation(&operation)?;
+
+    // Send proposal through Raft
+    state.proposal_tx.send(data).await.map_err(|e| {
+        RaftMetricsError::Internal(format!("Failed to send proposal: {}", e))
+    })?;
 
     Ok(Json(MetricResponse {
-        success: true,
-        message: format!("Metric recorded on worker {}", partition + 1),
+        name: request.metric_name,
+        value: request.value,
+        timestamp: chrono::Utc::now().timestamp(),
     }))
 }
 
 async fn get_metric(
     State(state): State<ControlState>,
     Path(name): Path<String>,
-) -> Result<Json<WorkerMetricResponse>> {
-    info!("Retrieving metric: {}", name);
+) -> Result<Json<MetricResponse>> {
+    info!("Getting metric: {}", name);
     
-    let worker_count = state.worker_urls.len();
-    let partition = get_partition(&name, worker_count);
-    let worker_url = &state.worker_urls[partition];
-    debug!("Metric '{}' hashed to partition {} ({})", name, partition, worker_url);
-    
-    let response = state.http_client.get(&format!("{}/metrics/{}", worker_url, name))
-        .send()
-        .await
-        .map_err(|e| RaftMetricsError::Internal(format!("Failed to forward request to worker: {}", e)))?;
-        
-    if !response.status().is_success() {
-        let error_text = response.text().await
-            .unwrap_or_else(|_| "Unknown error".to_string());
-        return Err(RaftMetricsError::Internal(format!("Worker failed to retrieve metric: {}", error_text)));
-    }
-    
-    let metric_response: WorkerMetricResponse = response.json().await
-        .map_err(|e| RaftMetricsError::Internal(format!("Failed to parse response: {}", e)))?;
-    
-    Ok(Json(metric_response))
+    let value = state.metrics.get_metric(&name).await?
+        .ok_or_else(|| RaftMetricsError::NotFound(format!("Metric {} not found", name)))?;
+
+    Ok(Json(MetricResponse {
+        name,
+        value,
+        timestamp: chrono::Utc::now().timestamp(),
+    }))
 }
 
 async fn get_metric_aggregate(
     State(state): State<ControlState>,
     Path(name): Path<String>,
 ) -> Result<Json<MetricAggregateResponse>> {
-    info!("Calculating aggregate for metric: {}", name);
+    info!("Getting metric aggregate: {}", name);
     
-    let worker_count = state.worker_urls.len();
-    let partition = get_partition(&name, worker_count);
-    let worker_url = &state.worker_urls[partition];
-    debug!("Metric '{}' hashed to partition {} ({})", name, partition, worker_url);
-    
-    let response = state.http_client.get(&format!("{}/metrics/{}/aggregate", worker_url, name))
-        .send()
-        .await
-        .map_err(|e| RaftMetricsError::Internal(format!("Failed to forward request to worker: {}", e)))?;
-        
-    if !response.status().is_success() {
-        let error_text = response.text().await
-            .unwrap_or_else(|_| "Unknown error".to_string());
-        return Err(RaftMetricsError::Internal(format!("Worker failed to retrieve aggregate: {}", error_text)));
-    }
-    
-    let aggregate_response: MetricAggregateResponse = response.json().await
-        .map_err(|e| RaftMetricsError::Internal(format!("Failed to parse response: {}", e)))?;
-    
-    Ok(Json(aggregate_response))
+    let stats = state.metrics.get_metric_aggregate(&name).await?
+        .ok_or_else(|| RaftMetricsError::NotFound(format!("Metric {} not found", name)))?;
+
+    Ok(Json(MetricAggregateResponse {
+        name,
+        count: stats.count,
+        sum: stats.sum,
+        average: stats.average,
+        min: stats.min,
+        max: stats.max,
+    }))
 }
 
-pub async fn start_control_node() {
+pub async fn start_control_node() -> Result<()> {
     let storage = Arc::new(MemStorage::new());
-    let metrics = Arc::new(MetricsRegistry::new());
+    let metrics = Arc::new(MetricsRegistry::new()?);
 
-    // Parse worker URLs from environment variable
-    let worker_urls: Vec<String> = std::env::var("WORKER_HOSTS")
-        .unwrap_or_else(|_| "http://localhost:8081".to_string())
-        .split(',')
-        .map(|host| {
-            if host.starts_with("http://") {
-                host.to_string()
-            } else {
-                format!("http://{}", host)
-            }
-        })
-        .collect();
+    // Set up Raft channels
+    let (proposal_tx, proposal_rx) = mpsc::channel(100);
+    let (msg_tx, msg_rx) = mpsc::channel(100);
 
-    info!("Configured worker URLs: {:?}", worker_urls);
+    // Parse Raft cluster configuration
+    let raft_cluster = env::var("RAFT_CLUSTER")
+        .unwrap_or_else(|_| "control:9080,worker-1:9081,worker-2:9082".to_string());
+    
+    let mut peers = HashMap::new();
+    for (id, addr) in raft_cluster.split(',').enumerate() {
+        peers.insert((id + 1) as u64, addr.to_string());
+    }
 
+    // Initialize Raft node
+    let raft_node = RaftNode::new(
+        1, // Control node is always ID 1
+        peers,
+        msg_tx,
+        metrics.clone(),
+    ).expect("Failed to create Raft node");
+
+    // Start Raft node in background
+    tokio::spawn(run_raft_node(raft_node, proposal_rx, msg_rx));
+
+    // Create control state
     let state = ControlState {
         storage: storage.clone(),
         metrics: metrics.clone(),
-        worker_urls: Arc::new(worker_urls),
-        http_client: Arc::new(reqwest::Client::new()),
+        proposal_tx,
     };
 
-    let app = control_router(state);
-
-    let port = std::env::var("PORT").unwrap_or_else(|_| "8080".to_string());
+    // Start HTTP server
+    let app = control_router().await.with_state(state);
+    let port = env::var("PORT").unwrap_or_else(|_| "8080".to_string());
     let addr = format!("0.0.0.0:{}", port);
     info!("Starting control node on {}", addr);
 
-    let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+    let listener = TcpListener::bind(addr).await.map_err(|e| 
+        RaftMetricsError::Internal(format!("Failed to bind to address: {}", e)))?;
+
+    axum::serve(listener, app).await.map_err(|e|
+        RaftMetricsError::Internal(format!("Server error: {}", e)))?;
+
+    Ok(())
 }

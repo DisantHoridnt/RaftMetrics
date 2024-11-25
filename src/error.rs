@@ -4,35 +4,37 @@ use axum::{
     Json,
 };
 use thiserror::Error;
+use serde_json;
+use duckdb;
 
-#[derive(Error, Debug)]
+#[derive(Debug, Error)]
 pub enum RaftMetricsError {
-    #[error("Database error: {0}")]
-    Database(#[from] duckdb::Error),
-    
-    #[error("Raft error: {0}")]
-    Raft(#[from] raft::Error),
-    
-    #[error("Request error: {0}")]
-    Request(String),
-    
-    #[error("Protobuf error: {0}")]
-    Protobuf(String),
-    
-    #[error("Resource not found")]
-    NotFound,
-    
     #[error("Internal error: {0}")]
     Internal(String),
     
+    #[error("Not found: {0}")]
+    NotFound(String),
+    
     #[error("Invalid request: {0}")]
     InvalidRequest(String),
+    
+    #[error(transparent)]
+    SerdeJson(#[from] serde_json::Error),
+    
+    #[error(transparent)]
+    Raft(#[from] raft::Error),
+    
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+
+    #[error(transparent)]
+    Database(#[from] duckdb::Error),
 }
 
 impl IntoResponse for RaftMetricsError {
     fn into_response(self) -> Response {
         let (status, error_message) = match self {
-            RaftMetricsError::NotFound => (
+            RaftMetricsError::NotFound(_) => (
                 StatusCode::NOT_FOUND,
                 self.to_string(),
             ),
@@ -40,9 +42,9 @@ impl IntoResponse for RaftMetricsError {
                 StatusCode::BAD_REQUEST,
                 self.to_string(),
             ),
-            RaftMetricsError::Raft(e) => (
+            RaftMetricsError::Raft(_) | RaftMetricsError::Io(_) | RaftMetricsError::Database(_) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Raft error: {}", e),
+                self.to_string(),
             ),
             _ => (
                 StatusCode::INTERNAL_SERVER_ERROR,

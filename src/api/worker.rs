@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::collections::HashMap;
 use tokio::sync::mpsc;
-use tracing::{info, debug, error};
+use tracing::info;
 use tokio::net::TcpListener;
 use std::env;
 use chrono;
@@ -18,7 +18,7 @@ use crate::{
     RaftMetricsError,
     metrics::MetricsRegistry,
     raft::{
-        node::{RaftNode, RaftMessage, run_raft_node},
+        node::{RaftNode, run_raft_node},
         storage::MemStorage,
     },
 };
@@ -28,10 +28,10 @@ pub struct WorkerState {
     pub storage: Arc<MemStorage>,
     pub metrics: Arc<MetricsRegistry>,
     pub worker_id: usize,
-    pub proposal_tx: mpsc::Sender<RaftMessage>,
+    pub proposal_tx: mpsc::Sender<Vec<u8>>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct MetricRequest {
     pub metric_name: String,
     pub value: f64,
@@ -77,20 +77,18 @@ async fn process_metric(
     info!("Worker {} processing metric: {} = {}", 
         state.worker_id, request.metric_name, request.value);
 
-    // Create Raft proposal
-    let proposal = RaftMessage {
-        data: serde_json::to_vec(&request)?,
-        context: vec![],
-    };
+    // Create proposal data
+    let data = serde_json::to_vec(&request)
+        .map_err(|e| RaftMetricsError::Internal(format!("Failed to serialize metric: {}", e)))?;
 
     // Send proposal through Raft
-    state.proposal_tx.send(proposal).await.map_err(|e| {
+    state.proposal_tx.send(data).await.map_err(|e| {
         RaftMetricsError::Internal(format!("Failed to send proposal: {}", e))
     })?;
 
     // For now, still process locally
     // This will be replaced by the Raft commit handler
-    state.metrics.record_metric(&request.metric_name, request.value);
+    state.metrics.record_metric(&request.metric_name, request.value).await?;
 
     Ok(Json(WorkerMetricResponse {
         name: request.metric_name,
@@ -105,7 +103,7 @@ async fn get_metric(
 ) -> Result<Json<WorkerMetricResponse>> {
     info!("Worker {} retrieving metric: {}", state.worker_id, name);
     
-    let value = state.metrics.get_metric(&name)
+    let value = state.metrics.get_metric(&name).await?
         .ok_or_else(|| RaftMetricsError::NotFound(format!("Metric {} not found", name)))?;
 
     Ok(Json(WorkerMetricResponse {
@@ -121,22 +119,22 @@ async fn get_metric_aggregate(
 ) -> Result<Json<MetricAggregateResponse>> {
     info!("Worker {} calculating aggregate for metric: {}", state.worker_id, name);
     
-    let stats = state.metrics.get_metric_stats(&name)
+    let stats = state.metrics.get_metric_aggregate(&name).await?
         .ok_or_else(|| RaftMetricsError::NotFound(format!("Metric {} not found", name)))?;
 
     Ok(Json(MetricAggregateResponse {
         name,
         count: stats.count,
         sum: stats.sum,
-        average: stats.mean,
+        average: stats.average,
         min: stats.min,
         max: stats.max,
     }))
 }
 
-pub async fn start_worker_node(worker_id: usize) {
+pub async fn start_worker_node(worker_id: usize) -> Result<()> {
     let storage = Arc::new(MemStorage::new());
-    let metrics = Arc::new(MetricsRegistry::new());
+    let metrics = Arc::new(MetricsRegistry::new()?);
 
     // Set up Raft channels
     let (proposal_tx, proposal_rx) = mpsc::channel(100);
@@ -156,6 +154,7 @@ pub async fn start_worker_node(worker_id: usize) {
         worker_id as u64,
         peers,
         msg_tx,
+        metrics.clone(),
     ).expect("Failed to create Raft node");
 
     // Start Raft node in background
@@ -175,6 +174,11 @@ pub async fn start_worker_node(worker_id: usize) {
     let addr = format!("0.0.0.0:{}", port);
     info!("Starting worker node {} on {}", worker_id, addr);
 
-    let listener = TcpListener::bind(addr).await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+    let listener = TcpListener::bind(addr).await.map_err(|e| 
+        RaftMetricsError::Internal(format!("Failed to bind to address: {}", e)))?;
+
+    axum::serve(listener, app).await.map_err(|e|
+        RaftMetricsError::Internal(format!("Server error: {}", e)))?;
+
+    Ok(())
 }
