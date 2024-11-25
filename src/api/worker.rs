@@ -12,6 +12,7 @@ use std::env;
 use chrono;
 
 use crate::{
+    Result,
     RaftMetricsError,
     metrics::MetricsRegistry,
     raft::storage::MemStorage,
@@ -25,37 +26,13 @@ pub struct WorkerState {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ProcessRequest {
+pub struct MetricRequest {
     pub metric_name: String,
     pub value: f64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ProcessResponse {
-    pub success: bool,
-    pub message: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct MetricResponse {
-    pub metric_name: String,
-    pub value: f64,
-    pub worker_id: usize,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct AggregateResponse {
-    pub metric_name: String,
-    pub count: usize,
-    pub sum: f64,
-    pub average: f64,
-    pub min: f64,
-    pub max: f64,
-    pub worker_id: usize,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct MetricValue {
+pub struct WorkerMetricResponse {
     pub name: String,
     pub value: f64,
     pub timestamp: i64,
@@ -80,17 +57,17 @@ pub fn worker_router(state: WorkerState) -> Router {
         .with_state(state)
 }
 
-async fn health_check(State(state): State<WorkerState>) -> impl IntoResponse {
+async fn health_check() -> impl IntoResponse {
     Json(serde_json::json!({
         "status": "healthy",
-        "message": format!("Worker node {} is operational", state.worker_id),
+        "message": "Worker node is operational"
     }))
 }
 
 async fn process_metric(
     State(state): State<WorkerState>,
-    Json(request): Json<ProcessRequest>,
-) -> Result<impl IntoResponse, RaftMetricsError> {
+    Json(request): Json<MetricRequest>,
+) -> Result<Json<WorkerMetricResponse>> {
     info!(
         "Worker {} processing metric: {} = {}",
         state.worker_id, request.metric_name, request.value
@@ -98,21 +75,23 @@ async fn process_metric(
     
     state.metrics.record_metric(&request.metric_name, request.value).await?;
     
-    Ok(Json(ProcessResponse {
-        success: true,
-        message: format!("Metric {} processed successfully by worker {}", request.metric_name, state.worker_id),
+    Ok(Json(WorkerMetricResponse {
+        name: request.metric_name,
+        value: request.value,
+        timestamp: chrono::Utc::now().timestamp(),
     }))
 }
 
 async fn get_metric(
     State(state): State<WorkerState>,
     Path(name): Path<String>,
-) -> Result<impl IntoResponse, RaftMetricsError> {
+) -> Result<Json<WorkerMetricResponse>> {
     info!("Worker {} retrieving metric: {}", state.worker_id, name);
     
-    let value = state.metrics.get_metric(&name).await?;
+    let value = state.metrics.get_metric(&name).await?
+        .ok_or_else(|| RaftMetricsError::NotFound(format!("Metric {} not found", name)))?;
     
-    Ok(Json(MetricValue {
+    Ok(Json(WorkerMetricResponse {
         name: name.clone(),
         value,
         timestamp: chrono::Utc::now().timestamp(),
@@ -122,10 +101,11 @@ async fn get_metric(
 async fn get_metric_aggregate(
     State(state): State<WorkerState>,
     Path(name): Path<String>,
-) -> Result<impl IntoResponse, RaftMetricsError> {
+) -> Result<Json<MetricAggregateResponse>> {
     info!("Worker {} calculating aggregate for metric: {}", state.worker_id, name);
     
-    let aggregate = state.metrics.get_metric_aggregate(&name).await?;
+    let aggregate = state.metrics.get_metric_aggregate(&name).await?
+        .ok_or_else(|| RaftMetricsError::NotFound(format!("Metric {} not found", name)))?;
     
     Ok(Json(MetricAggregateResponse {
         name: name.clone(),
@@ -140,26 +120,17 @@ async fn get_metric_aggregate(
 pub async fn start_worker_node(worker_id: usize) {
     let storage = Arc::new(MemStorage::new());
     let metrics = Arc::new(MetricsRegistry::new());
-    
+
     let state = WorkerState {
-        storage,
-        metrics,
+        storage: storage.clone(),
+        metrics: metrics.clone(),
         worker_id,
     };
-    
-    let app = worker_router(state);
-    
-    let port = env::var("PORT").unwrap_or_else(|_| {
-        match worker_id {
-            1 => "8081",
-            2 => "8082",
-            _ => "8081",
-        }.to_string()
-    });
-    
+
+    let port = env::var("PORT").unwrap_or_else(|_| "8081".to_string());
     let addr = format!("0.0.0.0:{}", port);
     info!("Starting worker node {} on {}", worker_id, addr);
-    
+
     let listener = TcpListener::bind(addr).await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+    axum::serve(listener, worker_router(state)).await.unwrap();
 }

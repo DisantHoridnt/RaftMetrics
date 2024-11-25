@@ -1,7 +1,7 @@
 use axum::{
-    extract::State,
+    extract::{State, Path},
     routing::{get, post},
-    Router,
+    Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -13,6 +13,7 @@ use crate::{
     metrics::MetricsRegistry,
     raft::storage::MemStorage,
     partitioning::get_partition,
+    api::worker::{WorkerMetricResponse, MetricAggregateResponse},
 };
 
 #[derive(Clone)]
@@ -45,7 +46,7 @@ pub fn control_router(state: ControlState) -> Router {
 }
 
 async fn health_check() -> impl axum::response::IntoResponse {
-    axum::Json(serde_json::json!({
+    Json(serde_json::json!({
         "status": "healthy",
         "message": "Control node is operational"
     }))
@@ -53,32 +54,29 @@ async fn health_check() -> impl axum::response::IntoResponse {
 
 async fn record_metric(
     State(state): State<ControlState>,
-    axum::Json(request): axum::Json<MetricRequest>,
-) -> Result<impl axum::response::IntoResponse, RaftMetricsError> {
+    Json(request): Json<MetricRequest>,
+) -> Result<Json<MetricResponse>> {
     info!("Recording metric: {} = {}", request.metric_name, request.value);
     
     let worker_count = state.worker_urls.len();
     info!("Total workers: {}", worker_count);
     
     let partition = get_partition(&request.metric_name, worker_count);
-    info!("Selected partition {} for metric {}", partition, request.metric_name);
-    
     let worker_url = &state.worker_urls[partition];
-    info!("Routing metric {} to worker {}", request.metric_name, worker_url);
-
+    
     let response = state.http_client.post(&format!("{}/process", worker_url))
         .json(&request)
         .send()
         .await
-        .map_err(|e| RaftMetricsError::Internal(format!("Failed to forward metric: {}", e)))?;
-
+        .map_err(|e| RaftMetricsError::Internal(format!("Failed to forward request to worker: {}", e)))?;
+        
     if !response.status().is_success() {
         let error_text = response.text().await
             .unwrap_or_else(|_| "Unknown error".to_string());
         return Err(RaftMetricsError::Internal(format!("Worker failed to process metric: {}", error_text)));
     }
 
-    Ok(axum::Json(MetricResponse {
+    Ok(Json(MetricResponse {
         success: true,
         message: format!("Metric recorded on worker {}", partition + 1),
     }))
@@ -86,56 +84,52 @@ async fn record_metric(
 
 async fn get_metric(
     State(state): State<ControlState>,
-    axum::extract::Path(name): axum::extract::Path<String>,
-) -> Result<impl axum::response::IntoResponse, RaftMetricsError> {
+    Path(name): Path<String>,
+) -> Result<Json<WorkerMetricResponse>> {
     info!("Retrieving metric: {}", name);
     
     let worker_count = state.worker_urls.len();
     let partition = get_partition(&name, worker_count);
     let worker_url = &state.worker_urls[partition];
     
-    info!("Fetching metric {} from worker {} (partition {})", name, worker_url, partition);
-    
     let response = state.http_client.get(&format!("{}/metrics/{}", worker_url, name))
         .send()
         .await
-        .map_err(|e| RaftMetricsError::Internal(format!("Failed to fetch metric: {}", e)))?;
+        .map_err(|e| RaftMetricsError::Internal(format!("Failed to forward request to worker: {}", e)))?;
         
     if !response.status().is_success() {
         return Err(RaftMetricsError::NotFound);
     }
     
-    let metric_response: crate::api::worker::MetricResponse = response.json().await
+    let metric_response: WorkerMetricResponse = response.json().await
         .map_err(|e| RaftMetricsError::Internal(format!("Failed to parse response: {}", e)))?;
     
-    Ok(axum::Json(metric_response))
+    Ok(Json(metric_response))
 }
 
 async fn get_metric_aggregate(
     State(state): State<ControlState>,
-    axum::extract::Path(name): axum::extract::Path<String>,
-) -> Result<impl axum::response::IntoResponse, RaftMetricsError> {
+    Path(name): Path<String>,
+) -> Result<Json<MetricAggregateResponse>> {
     info!("Calculating aggregate for metric: {}", name);
     
     let worker_count = state.worker_urls.len();
     let partition = get_partition(&name, worker_count);
     let worker_url = &state.worker_urls[partition];
     
-    info!("Fetching aggregate for metric {} from worker {} (partition {})", name, worker_url, partition);
-    
     let response = state.http_client.get(&format!("{}/metrics/{}/aggregate", worker_url, name))
         .send()
         .await
-        .map_err(|e| RaftMetricsError::Internal(format!("Failed to fetch aggregate: {}", e)))?;
+        .map_err(|e| RaftMetricsError::Internal(format!("Failed to forward request to worker: {}", e)))?;
         
     if !response.status().is_success() {
         return Err(RaftMetricsError::NotFound);
     }
     
-    let aggregate_response: crate::api::worker::AggregateResponse = response.json().await
+    let aggregate_response: MetricAggregateResponse = response.json().await
         .map_err(|e| RaftMetricsError::Internal(format!("Failed to parse response: {}", e)))?;
     
-    Ok(axum::Json(aggregate_response))
+    Ok(Json(aggregate_response))
 }
 
 pub async fn start_control_node() {
@@ -155,8 +149,6 @@ pub async fn start_control_node() {
         })
         .collect();
 
-    info!("Configured worker URLs: {:?}", worker_urls);
-
     let state = ControlState {
         storage: storage.clone(),
         metrics: metrics.clone(),
@@ -164,11 +156,7 @@ pub async fn start_control_node() {
         http_client: Arc::new(reqwest::Client::new()),
     };
 
-    let app = Router::new()
-        .route("/metrics", post(record_metric))
-        .route("/metrics/:name", get(get_metric))
-        .route("/metrics/:name/aggregate", get(get_metric_aggregate))
-        .with_state(state);
+    let app = control_router(state);
 
     let port = std::env::var("PORT").unwrap_or_else(|_| "8080".to_string());
     let addr = format!("0.0.0.0:{}", port);
