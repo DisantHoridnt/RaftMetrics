@@ -6,10 +6,10 @@ edition = "2021"
 [dependencies]
 # Web framework and HTTP
 tokio = { version = "1.35", features = ["full"] }
-axum = { version = "0.7", features = ["http2"] }
+axum = { version = "0.7", features = ["http2", "macros"] }
 hyper = { version = "0.14", features = ["full"] }
 tower = "0.4"
-tower-http = { version = "0.5", features = ["trace"] }
+tower-http = { version = "0.5", features = ["trace", "cors"] }
 
 # Serialization
 serde = { version = "1.0.193", features = ["derive"] }
@@ -17,42 +17,45 @@ serde_json = "1.0.108"
 
 # Tracing and logging
 tracing = "0.1.40"
-tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json"] }
 slog = "2.7.0"
 slog-term = "2.9.0"
 slog-async = "2.8.0"
 
-# Database
-duckdb = { version = "0.9.1" }
-
 # Networking
-reqwest = { version = "0.11.22", features = ["json"] }
+reqwest = { version = "0.11.22", features = ["json", "rustls-tls"] }
 
 # Raft consensus
-# Use prost codec for raft
-raft = { version = "0.7.0", default-features = false, features = ["prost-codec"] }
+raft = { version = "0.7.0", default-features = false, features = ["prost-codec", "default-logger"] }
+
+# Metrics and monitoring
+prometheus = { version = "0.13.3", features = ["process"] }
+prometheus-client = "0.22.0"
+metrics = "0.21.1"
+metrics-exporter-prometheus = "0.12.1"
 
 # Utilities
 thiserror = "1.0.50"
 async-trait = "0.1.74"
 bytes = "1.5.0"
-uuid = { version = "1.6.1", features = ["v4"] }
-prometheus = "0.13.3"
+uuid = { version = "1.6.1", features = ["v4", "serde"] }
 lazy_static = "1.4.0"
+futures = "0.3"
+parking_lot = "0.12"
 
-# Protobuf dependencies
+# Protobuf
 prost = "0.11"
 prost-types = "0.11"
 tonic = { version = "0.9", features = ["tls", "transport"] }
-chrono = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
 
 [build-dependencies]
-# Use specific version of tonic-build that matches tonic
 tonic-build = { version = "0.9", features = ["prost"] }
 
 [dev-dependencies]
-tokio-test = "0.4.3"
-assert_matches = "1.5.0"
+tokio-test = "0.4"
+test-log = "0.2"
+pretty_assertions = "1.4"
 
 [[bin]]
 name = "distributed_analytics_system"

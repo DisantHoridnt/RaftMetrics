@@ -8,66 +8,137 @@ services:
       - "8080:8080"
     environment:
       - RUST_LOG=debug
+      - RUST_BACKTRACE=1
       - NODE_TYPE=control
       - NODE_ID=1
       - PORT=8080
       - AUTH_TOKEN=local-dev-token-123
       - WORKER_HOSTS=worker-1:8081,worker-2:8082
+    volumes:
+      - control_data:/data
     networks:
       - raftnet
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
 
   worker-1:
     build: .
-    command: distributed_analytics_system worker --id 1 --port 8081
+    command: distributed_analytics_system
     ports:
       - "8081:8081"
+      - "9081:9081"  # Raft peer communication port
     environment:
       - RUST_LOG=debug
+      - RUST_BACKTRACE=1
       - NODE_TYPE=worker
       - NODE_ID=1
       - PORT=8081
+      - RAFT_PORT=9081
       - AUTH_TOKEN=local-dev-token-123
       - CONTROL_HOST=control:8080
       - WORKER_HOSTS=worker-1:8081,worker-2:8082
+      - RAFT_CLUSTER=worker-1:9081,worker-2:9082
       - RAFT_ID=1
-      - RAFT_PEERS=1,2
-      - RAFT_CLUSTER=worker-1:8081,worker-2:8082
-      - DB_PATH=/data/worker1.duckdb
+      - METRICS_PATH=/metrics
     volumes:
       - worker1_data:/data
     networks:
       - raftnet
     depends_on:
-      - control
+      control:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
 
   worker-2:
     build: .
-    command: distributed_analytics_system worker --id 2 --port 8082
+    command: distributed_analytics_system
     ports:
       - "8082:8082"
+      - "9082:9082"  # Raft peer communication port
     environment:
       - RUST_LOG=debug
+      - RUST_BACKTRACE=1
       - NODE_TYPE=worker
       - NODE_ID=2
       - PORT=8082
+      - RAFT_PORT=9082
       - AUTH_TOKEN=local-dev-token-123
       - CONTROL_HOST=control:8080
       - WORKER_HOSTS=worker-1:8081,worker-2:8082
+      - RAFT_CLUSTER=worker-1:9081,worker-2:9082
       - RAFT_ID=2
-      - RAFT_PEERS=1,2
-      - RAFT_CLUSTER=worker-1:8081,worker-2:8082
-      - DB_PATH=/data/worker2.duckdb
+      - METRICS_PATH=/metrics
     volumes:
       - worker2_data:/data
     networks:
       - raftnet
     depends_on:
-      - control
+      control:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v2.45.0
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    ports:
+      - "9090:9090"
+    networks:
+      - raftnet
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:10.0.3
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel
+      # Use Docker DNS for service discovery
+      - GF_DATABASE_HOST=prometheus:9090
+    ports:
+      - "3000:3000"
+    networks:
+      - raftnet
+    depends_on:
+      - prometheus
+    restart: unless-stopped
 
 networks:
   raftnet:
     driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.20.0.0/16
 
 volumes:
+  control_data:
   worker1_data:
   worker2_data:
+  prometheus_data:
+  grafana_data:
