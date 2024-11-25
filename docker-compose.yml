@@ -5,32 +5,33 @@ services:
     build: .
     command: distributed_analytics_system
     ports:
-      - "8080:3000"
+      - "8080:8080"
     environment:
-      - RUST_LOG=info
-      - NODE_ROLE=control
+      - RUST_LOG=debug
+      - NODE_TYPE=control
       - NODE_ID=1
-      - PORT=3000
+      - PORT=8080
       - AUTH_TOKEN=local-dev-token-123
-      - WORKER_HOSTS=worker-1:3001,worker-2:3001
+      - WORKER_HOSTS=worker-1:8081,worker-2:8082
     networks:
       - raftnet
 
   worker-1:
     build: .
-    command: distributed_analytics_system worker --id 2 --port 3001
+    command: distributed_analytics_system worker --id 1 --port 8081
     ports:
-      - "8081:3001"
+      - "8081:8081"
     environment:
-      - RUST_LOG=info
-      - NODE_ROLE=worker
-      - NODE_ID=2
-      - PORT=3001
+      - RUST_LOG=debug
+      - NODE_TYPE=worker
+      - NODE_ID=1
+      - PORT=8081
       - AUTH_TOKEN=local-dev-token-123
-      - CONTROL_HOST=control:3000
-      - WORKER_HOSTS=worker-1:3001,worker-2:3001
-      - RAFT_ID=2
-      - RAFT_CLUSTER=worker-1:3001,worker-2:3001
+      - CONTROL_HOST=control:8080
+      - WORKER_HOSTS=worker-1:8081,worker-2:8082
+      - RAFT_ID=1
+      - RAFT_PEERS=1,2
+      - RAFT_CLUSTER=worker-1:8081,worker-2:8082
       - DB_PATH=/data/worker1.duckdb
     volumes:
       - worker1_data:/data
@@ -41,19 +42,20 @@ services:
 
   worker-2:
     build: .
-    command: distributed_analytics_system worker --id 3 --port 3001
+    command: distributed_analytics_system worker --id 2 --port 8082
     ports:
-      - "8082:3001"
+      - "8082:8082"
     environment:
-      - RUST_LOG=info
-      - NODE_ROLE=worker
-      - NODE_ID=3
-      - PORT=3001
+      - RUST_LOG=debug
+      - NODE_TYPE=worker
+      - NODE_ID=2
+      - PORT=8082
       - AUTH_TOKEN=local-dev-token-123
-      - CONTROL_HOST=control:3000
-      - WORKER_HOSTS=worker-1:3001,worker-2:3001
-      - RAFT_ID=3
-      - RAFT_CLUSTER=worker-1:3001,worker-2:3001
+      - CONTROL_HOST=control:8080
+      - WORKER_HOSTS=worker-1:8081,worker-2:8082
+      - RAFT_ID=2
+      - RAFT_PEERS=1,2
+      - RAFT_CLUSTER=worker-1:8081,worker-2:8082
       - DB_PATH=/data/worker2.duckdb
     volumes:
       - worker2_data:/data
@@ -62,12 +64,10 @@ services:
     depends_on:
       - control
 
-volumes:
-  worker1_data:
-    driver: local
-  worker2_data:
-    driver: local
-
 networks:
   raftnet:
     driver: bridge
+
+volumes:
+  worker1_data:
+  worker2_data:

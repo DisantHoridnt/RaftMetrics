@@ -4,29 +4,51 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+# Web framework and HTTP
 tokio = { version = "1.35", features = ["full"] }
 axum = { version = "0.7", features = ["http2"] }
 hyper = { version = "0.14", features = ["full"] }
 tower = "0.4"
 tower-http = { version = "0.5", features = ["trace"] }
+
+# Serialization
 serde = { version = "1.0.193", features = ["derive"] }
 serde_json = "1.0.108"
+
+# Tracing and logging
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
-duckdb = { version = "0.9.1" }
-reqwest = { version = "0.11.22", features = ["json"] }
-raft = { version = "0.7.0", features = ["protobuf-codec"] }
 slog = "2.7.0"
 slog-term = "2.9.0"
 slog-async = "2.8.0"
+
+# Database
+duckdb = { version = "0.9.1" }
+
+# Networking
+reqwest = { version = "0.11.22", features = ["json"] }
+
+# Raft consensus
+# Use prost codec for raft
+raft = { version = "0.7.0", default-features = false, features = ["prost-codec"] }
+
+# Utilities
 thiserror = "1.0.50"
 async-trait = "0.1.74"
 bytes = "1.5.0"
 uuid = { version = "1.6.1", features = ["v4"] }
 prometheus = "0.13.3"
 lazy_static = "1.4.0"
-protobuf = "2.28.0"
+
+# Protobuf dependencies
+prost = "0.11"
+prost-types = "0.11"
+tonic = { version = "0.9", features = ["tls", "transport"] }
 chrono = "0.4"
+
+[build-dependencies]
+# Use specific version of tonic-build that matches tonic
+tonic-build = { version = "0.9", features = ["prost"] }
 
 [dev-dependencies]
 tokio-test = "0.4.3"

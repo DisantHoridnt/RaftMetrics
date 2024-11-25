@@ -1,15 +1,12 @@
-pub mod api;
-pub mod raft;
-pub mod proto;
-pub mod error;
-pub mod metrics;
-pub mod partitioning;
-pub mod logging;
+// Include the generated protobuf code
+pub mod metrics {
+    tonic::include_proto!("raftmetrics.v1");
+}
 
-pub use error::{Result, RaftMetricsError};
+pub use self::metrics::*;
 
 // Re-export commonly used types
-pub use proto::{
+pub use metrics::{
     MetricEntry,
     MetricBatch,
     MetricResponse,

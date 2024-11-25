@@ -4,13 +4,15 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use std::net::SocketAddr;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::info;
 use tokio::net::TcpListener;
+use std::env;
+use chrono;
 
 use crate::{
+    Result,
     RaftMetricsError,
     metrics::MetricsRegistry,
     raft::storage::MemStorage,
@@ -20,19 +22,30 @@ use crate::{
 pub struct WorkerState {
     pub storage: Arc<MemStorage>,
     pub metrics: Arc<MetricsRegistry>,
+    pub worker_id: usize,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ProcessRequest {
+pub struct MetricRequest {
     pub metric_name: String,
+    pub value: f64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct WorkerMetricResponse {
+    pub name: String,
     pub value: f64,
     pub timestamp: i64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ProcessResponse {
-    pub success: bool,
-    pub message: String,
+pub struct MetricAggregateResponse {
+    pub name: String,
+    pub count: u64,
+    pub sum: f64,
+    pub average: f64,
+    pub min: f64,
+    pub max: f64,
 }
 
 pub fn worker_router(state: WorkerState) -> Router {
@@ -40,6 +53,7 @@ pub fn worker_router(state: WorkerState) -> Router {
         .route("/health", get(health_check))
         .route("/process", post(process_metric))
         .route("/metrics/:name", get(get_metric))
+        .route("/metrics/:name/aggregate", get(get_metric_aggregate))
         .with_state(state)
 }
 
@@ -52,53 +66,71 @@ async fn health_check() -> impl IntoResponse {
 
 async fn process_metric(
     State(state): State<WorkerState>,
-    Json(request): Json<ProcessRequest>,
-) -> Result<impl IntoResponse, RaftMetricsError> {
+    Json(request): Json<MetricRequest>,
+) -> Result<Json<WorkerMetricResponse>> {
     info!(
-        "Processing metric: {} = {} at {}",
-        request.metric_name, request.value, request.timestamp
+        "Worker {} processing metric: {} = {}",
+        state.worker_id, request.metric_name, request.value
     );
     
-    state.metrics.record_metric_with_timestamp(
-        &request.metric_name,
-        request.value,
-        request.timestamp,
-    ).await?;
+    state.metrics.record_metric(&request.metric_name, request.value).await?;
     
-    Ok(Json(ProcessResponse {
-        success: true,
-        message: format!("Metric {} processed successfully", request.metric_name),
+    Ok(Json(WorkerMetricResponse {
+        name: request.metric_name,
+        value: request.value,
+        timestamp: chrono::Utc::now().timestamp(),
     }))
 }
 
 async fn get_metric(
     State(state): State<WorkerState>,
     Path(name): Path<String>,
-) -> Result<impl IntoResponse, RaftMetricsError> {
-    info!("Retrieving metric: {}", name);
+) -> Result<Json<WorkerMetricResponse>> {
+    info!("Worker {} retrieving metric: {}", state.worker_id, name);
     
-    let value = state.metrics.get_metric(&name).await?;
+    let value = state.metrics.get_metric(&name).await?
+        .ok_or(RaftMetricsError::NotFound)?;
     
-    Ok(Json(serde_json::json!({
-        "metric_name": name,
-        "value": value
-    })))
+    Ok(Json(WorkerMetricResponse {
+        name: name.clone(),
+        value,
+        timestamp: chrono::Utc::now().timestamp(),
+    }))
 }
 
-pub async fn start_worker_node() {
+async fn get_metric_aggregate(
+    State(state): State<WorkerState>,
+    Path(name): Path<String>,
+) -> Result<Json<MetricAggregateResponse>> {
+    info!("Worker {} calculating aggregate for metric: {}", state.worker_id, name);
+    
+    let aggregate = state.metrics.get_metric_aggregate(&name).await?
+        .ok_or(RaftMetricsError::NotFound)?;
+    
+    Ok(Json(MetricAggregateResponse {
+        name: name.clone(),
+        count: aggregate.count,
+        sum: aggregate.sum,
+        average: aggregate.average,
+        min: aggregate.min,
+        max: aggregate.max,
+    }))
+}
+
+pub async fn start_worker_node(worker_id: usize) {
     let storage = Arc::new(MemStorage::new());
     let metrics = Arc::new(MetricsRegistry::new());
-    
+
     let state = WorkerState {
-        storage,
-        metrics,
+        storage: storage.clone(),
+        metrics: metrics.clone(),
+        worker_id,
     };
-    
-    let app = worker_router(state);
-    
-    let addr = SocketAddr::from(([0, 0, 0, 0], 3001));
-    info!("Starting worker node on {}", addr);
-    
+
+    let port = env::var("PORT").unwrap_or_else(|_| "8081".to_string());
+    let addr = format!("0.0.0.0:{}", port);
+    info!("Starting worker node {} on {}", worker_id, addr);
+
     let listener = TcpListener::bind(addr).await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+    axum::serve(listener, worker_router(state)).await.unwrap();
 }

@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+package raftmetrics.v1;
+
+// Import any required proto files
+import "google/protobuf/timestamp.proto";
+
+service MetricsService {
+  rpc SendMetric (MetricEntry) returns (MetricResponse) {}
+  rpc BatchSendMetrics (MetricBatch) returns (MetricResponse) {}
+}
+
+message MetricEntry {
+  string metric_name = 1;
+  double value = 2;
+  google.protobuf.Timestamp timestamp = 3;
+  map<string, string> labels = 4;
+  optional string description = 5;
+}
+
+message MetricBatch {
+  repeated MetricEntry entries = 1;
+  optional string batch_id = 2;
+}
+
+message MetricResponse {
+  bool success = 1;
+  string message = 2;
+  optional string error_code = 3;
+}
+
+// Message used for Raft consensus
+message RaftMessage {
+  oneof content {
+    MetricBatch metrics = 1;
+    string command = 2;
+  }
+  google.protobuf.Timestamp created_at = 3;
+  optional string source_id = 4;
+}

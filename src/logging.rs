@@ -1,7 +1,6 @@
 use slog::{Drain, Logger, o};
 use slog_term::{TermDecorator, CompactFormat};
 use slog_async::Async;
-use std::sync::Arc;
 
 pub fn setup_logger(node_id: u64, role: &str) -> Logger {
     let decorator = TermDecorator::new().build();
@@ -32,21 +31,38 @@ pub fn get_metrics_logger() -> Logger {
     )
 }
 
-use tracing::{info, Level};
-use tracing_subscriber::FmtSubscriber;
+use tracing_subscriber::{
+    fmt,
+    EnvFilter,
+    layer::SubscriberExt,
+    util::SubscriberInitExt,
+};
+use tracing::Level;
 
-pub fn init() {
-    let subscriber = FmtSubscriber::builder()
-        .with_max_level(Level::INFO)
+/// Sets up the logging subscriber for the application.
+/// 
+/// # Arguments
+/// * `node_id` - Unique identifier for the node (unused for now but kept for future use)
+/// * `node_type` - Type of node (control/worker)
+pub fn init_logger(_node_id: u64, node_type: &str) {
+    let env_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| {
+            EnvFilter::new(format!("{}={}", node_type, Level::INFO))
+        });
+
+    let fmt_layer = fmt::layer()
         .with_target(false)
         .with_thread_ids(true)
         .with_file(true)
         .with_line_number(true)
-        .pretty()
-        .try_init();
+        .with_thread_names(true)
+        .with_level(true)
+        .with_ansi(true)
+        .compact();
 
-    match subscriber {
-        Ok(_) => info!("Logger initialized successfully"),
-        Err(e) => eprintln!("Failed to initialize logger: {}", e),
-    }
+    tracing_subscriber::registry()
+        .with(env_filter)
+        .with(fmt_layer)
+        .try_init()
+        .expect("Failed to initialize logger");
 }

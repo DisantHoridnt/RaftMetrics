@@ -1,31 +1,31 @@
 use std::env;
-use distributed_analytics_system::{
-    api::{control, worker},
-    logging,
-    metrics,
-};
+use tracing::info;
 
 #[tokio::main]
 async fn main() {
-    // Initialize logging
-    let node_role = env::var("NODE_ROLE").unwrap_or_else(|_| "control".to_string());
-    let node_id = env::var("NODE_ID")
+    // Get node type from environment variable
+    let node_type = env::var("NODE_TYPE").unwrap_or_else(|_| "control".to_string());
+    
+    // Try WORKER_ID first, then NODE_ID for backward compatibility
+    let worker_id: usize = env::var("NODE_ID")
+        .or_else(|_| env::var("WORKER_ID"))
         .unwrap_or_else(|_| "1".to_string())
         .parse()
         .unwrap_or(1);
 
-    let logger = logging::setup_logger(node_id, &node_role);
+    // Initialize logging
+    distributed_analytics_system::logging::init_logger(worker_id as u64, &node_type);
 
-    // Initialize metrics
-    metrics::init_metrics();
-
-    // Start node based on role
-    match node_role.as_str() {
+    info!("Starting node with type: {}", node_type);
+    
+    match node_type.as_str() {
         "worker" => {
-            worker::start_worker_node().await;
+            info!("Starting worker node {}", worker_id);
+            distributed_analytics_system::api::worker::start_worker_node(worker_id).await;
         }
         _ => {
-            control::start_control_node().await;
+            info!("Starting control node");
+            distributed_analytics_system::api::control::start_control_node().await;
         }
     }
 }
