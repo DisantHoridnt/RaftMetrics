@@ -4,6 +4,7 @@ use prometheus::{
 };
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
+use serde::{Serialize, Deserialize};
 
 use crate::RaftMetricsError;
 
@@ -87,6 +88,15 @@ pub struct MetricsRegistry {
     metrics: Arc<RwLock<HashMap<String, f64>>>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AggregateResult {
+    pub count: usize,
+    pub sum: f64,
+    pub average: f64,
+    pub min: f64,
+    pub max: f64,
+}
+
 impl MetricsRegistry {
     pub fn new() -> Self {
         let registry = Arc::new(Registry::new());
@@ -141,6 +151,29 @@ impl MetricsRegistry {
             .get(name)
             .copied()
             .ok_or(RaftMetricsError::NotFound)
+    }
+
+    pub async fn get_metrics_aggregate(&self) -> Result<AggregateResult, RaftMetricsError> {
+        let metrics = self.metrics.read().await;
+        
+        if metrics.is_empty() {
+            return Err(RaftMetricsError::NotFound);
+        }
+        
+        let values: Vec<f64> = metrics.values().copied().collect();
+        let count = values.len();
+        let sum: f64 = values.iter().sum();
+        let average = sum / count as f64;
+        let min = values.iter().fold(f64::INFINITY, |a, &b| a.min(b));
+        let max = values.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
+        
+        Ok(AggregateResult {
+            count,
+            sum,
+            average,
+            min,
+            max,
+        })
     }
 
     pub fn get_registry(&self) -> Arc<Registry> {

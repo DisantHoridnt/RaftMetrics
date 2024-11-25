@@ -39,6 +39,7 @@ pub fn control_router(state: ControlState) -> Router {
         .route("/health", get(health_check))
         .route("/metrics", post(record_metric))
         .route("/metrics/:name", get(get_metric))
+        .route("/metrics/aggregate", get(get_metrics_aggregate))
         .with_state(state)
 }
 
@@ -75,6 +76,16 @@ async fn get_metric(
         "metric_name": name,
         "value": value
     })))
+}
+
+async fn get_metrics_aggregate(
+    State(state): State<ControlState>,
+) -> Result<impl IntoResponse, RaftMetricsError> {
+    info!("Calculating metrics aggregate");
+    
+    let aggregate = state.metrics.get_metrics_aggregate().await?;
+    
+    Ok(Json(aggregate))
 }
 
 pub async fn start_control_node() {
