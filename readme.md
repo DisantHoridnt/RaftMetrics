@@ -1,12 +1,20 @@
 # RaftMetrics: Distributed Analytics System
 
 ## Overview
-A distributed analytics system implemented in Rust that demonstrates key distributed systems concepts including fault tolerance, data partitioning, and distributed computation. The system uses Raft consensus for reliable data replication across nodes.
+A distributed analytics system implemented in Rust that demonstrates key distributed systems concepts including fault tolerance, data partitioning, and distributed computation. The system uses consistent hashing for data partitioning and efficient metric distribution across worker nodes.
 
 ## Architecture
-- **Control Node**: Handles incoming requests and coordinates worker nodes
-- **Worker Nodes**: Process and store metrics data using DuckDB
-- **Consensus**: Uses Raft protocol for data replication and node coordination
+- **Control Node**: Handles incoming requests and routes metrics to appropriate worker nodes using consistent hashing
+- **Worker Nodes**: Process and store metrics data, providing both individual and aggregated metrics
+- **Partitioning**: Uses Jump Consistent Hashing for even distribution of metrics across workers
+- **Metrics**: Utilizes HistogramVec for accurate metric aggregation and statistics
+
+## Features
+- Consistent hashing ensures same metrics always route to same worker
+- Efficient metric aggregation with proper statistical distribution
+- Scalable architecture supporting multiple worker nodes
+- Real-time metric processing and aggregation
+- Comprehensive logging and debugging capabilities
 
 ## Quick Start with Docker Compose
 
@@ -49,91 +57,97 @@ GET /health
 }
 ```
 
-#### 2. Metrics Management
-
-##### Record Metric
+#### 2. Record Metric
 ```http
 POST /metrics
 Content-Type: application/json
 
 {
     "metric_name": "cpu_usage",
-    "value": 75.5,
-    "timestamp": "2024-01-20T15:30:00Z",
+    "value": 75.5
+}
+
+# Response
+{
+    "success": true,
+    "message": "Metric recorded on worker X"
 }
 ```
 
-##### Get Metric
+#### 3. Get Metric
 ```http
-GET /metrics/:name
+GET /metrics/{name}
 
 # Response
 {
     "metric_name": "cpu_usage",
-    "value": 75.5
+    "values": [75.5, 80.2, 70.1],
+    "timestamp": "2024-11-25T20:59:23.376Z"
 }
 ```
 
-##### Aggregate Metrics
+#### 4. Get Metric Aggregate
 ```http
-GET /aggregate?metric=cpu_usage&from=2024-01-20T00:00:00Z&to=2024-01-20T23:59:59Z
+GET /metrics/{name}/aggregate
 
 # Response
 {
-    "metric": "cpu_usage",
-    "aggregations": {
-        "avg": 68.5,
-        "min": 45.2,
-        "max": 92.1,
-        "count": 1440
-    }
+    "metric_name": "cpu_usage",
+    "count": 3,
+    "sum": 225.8,
+    "mean": 75.27,
+    "min": 70.1,
+    "max": 80.2,
+    "timestamp": "2024-11-25T20:59:23.376Z"
 }
 ```
 
-### Query Parameters
-- `from`: Start timestamp (ISO 8601)
-- `to`: End timestamp (ISO 8601)
-- `window`: Time window for aggregation (e.g., "1h", "1d")
-- `agg`: Aggregation functions (avg, min, max, sum, count)
-
-## Monitoring and Troubleshooting
-
-### Docker Commands
-- View all logs: `docker-compose logs -f`
-- View specific service: `docker-compose logs -f control`
-- Restart services: `docker-compose restart`
-- Stop stack: `docker-compose down`
-
-### Common Issues
-1. **Service Unavailable**: Check if all containers are running with `docker-compose ps`
-2. **Authentication Failed**: Verify the auth token in the request header
-3. **Connection Refused**: Ensure correct port mapping in docker-compose.yml
-
-## Technology Stack
-- **Language**: Rust
-- **Web Framework**: Axum
-- **Database**: DuckDB
-- **Consensus**: Raft (tikv/raft-rs)
-- **Runtime**: Tokio
-- **Serialization**: Serde
-- **Logging**: Tracing
-
 ## Development
 
-### Building from Source
-```bash
-cargo build --release
+### Project Structure
+```
+src/
+├── api/           # API handlers for control and worker nodes
+├── metrics/       # Metrics processing and aggregation logic
+├── partitioning/  # Consistent hashing implementation
+├── proto/         # Protocol buffer definitions
+└── raft/          # Consensus implementation (future)
 ```
 
-### Running Tests
+### Key Components
+1. **Control Node**
+   - Routes incoming metrics using consistent hashing
+   - Manages worker node coordination
+   - Handles API requests and responses
+
+2. **Worker Nodes**
+   - Process and store assigned metrics
+   - Provide individual and aggregated metric data
+   - Maintain metric history and statistics
+
+3. **Partitioning**
+   - Implements Jump Consistent Hashing
+   - Ensures even distribution of metrics
+   - Maintains consistency in routing
+
+### Building and Testing
 ```bash
+# Build the project
+cargo build
+
+# Run tests
 cargo test
+
+# Run with debug logging
+RUST_LOG=debug cargo run
 ```
 
-### Configuration
-Key environment variables:
-- `NODE_ROLE`: "control" or "worker"
-- `NODE_ID`: Unique node identifier
-- `PORT`: Service port
-- `AUTH_TOKEN`: Authentication token
-- `WORKER_HOSTS`: Comma-separated worker hosts
+## Contributing
+1. Fork the repository
+2. Create your feature branch
+3. Commit your changes
+4. Push to the branch
+5. Create a Pull Request
+
+## License
+This project is licensed under the MIT License - see the LICENSE file for details.
