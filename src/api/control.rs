@@ -98,7 +98,9 @@ async fn get_metric(
         .map_err(|e| RaftMetricsError::Internal(format!("Failed to forward request to worker: {}", e)))?;
         
     if !response.status().is_success() {
-        return Err(RaftMetricsError::NotFound);
+        let error_text = response.text().await
+            .unwrap_or_else(|_| "Unknown error".to_string());
+        return Err(RaftMetricsError::Internal(format!("Worker failed to retrieve metric: {}", error_text)));
     }
     
     let metric_response: WorkerMetricResponse = response.json().await
@@ -123,7 +125,9 @@ async fn get_metric_aggregate(
         .map_err(|e| RaftMetricsError::Internal(format!("Failed to forward request to worker: {}", e)))?;
         
     if !response.status().is_success() {
-        return Err(RaftMetricsError::NotFound);
+        let error_text = response.text().await
+            .unwrap_or_else(|_| "Unknown error".to_string());
+        return Err(RaftMetricsError::Internal(format!("Worker failed to retrieve aggregate: {}", error_text)));
     }
     
     let aggregate_response: MetricAggregateResponse = response.json().await

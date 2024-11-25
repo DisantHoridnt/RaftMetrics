@@ -33,8 +33,9 @@ impl RaftNode {
         let logger = Logger::root(slog::Discard, o!());
         
         // Initialize storage with configuration
-        let mut s = storage;
-        s.wl().set_conf_state(ConfState::from((peers, vec![])));
+        let s = storage;
+        let peers_clone = peers.clone();
+        s.wl().set_conf_state(ConfState::from((peers_clone, vec![])));
         
         let node = RawNode::new(&config, s, &logger)?;
         info!("Initialized Raft node {} with peers {:?}", id, peers);

@@ -4,6 +4,7 @@ pub mod proto;
 pub mod error;
 pub mod metrics;
 pub mod partitioning;
+pub mod logging;
 
 pub use error::{Result, RaftMetricsError};
 

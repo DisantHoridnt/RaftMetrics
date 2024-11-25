@@ -89,7 +89,7 @@ async fn get_metric(
     info!("Worker {} retrieving metric: {}", state.worker_id, name);
     
     let value = state.metrics.get_metric(&name).await?
-        .ok_or_else(|| RaftMetricsError::NotFound(format!("Metric {} not found", name)))?;
+        .ok_or(RaftMetricsError::NotFound)?;
     
     Ok(Json(WorkerMetricResponse {
         name: name.clone(),
@@ -105,7 +105,7 @@ async fn get_metric_aggregate(
     info!("Worker {} calculating aggregate for metric: {}", state.worker_id, name);
     
     let aggregate = state.metrics.get_metric_aggregate(&name).await?
-        .ok_or_else(|| RaftMetricsError::NotFound(format!("Metric {} not found", name)))?;
+        .ok_or(RaftMetricsError::NotFound)?;
     
     Ok(Json(MetricAggregateResponse {
         name: name.clone(),

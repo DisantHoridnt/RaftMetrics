@@ -110,7 +110,7 @@ impl Storage for MemStorage {
         Ok(entries.last().map_or(0, |e| e.index))
     }
 
-    fn snapshot(&self, request_index: u64, to: u64) -> raft::Result<Snapshot> {
+    fn snapshot(&self, request_index: u64, _to: u64) -> raft::Result<Snapshot> {
         let snapshot = self.snapshot.lock().map_err(|e|
             RaftError::Store(StorageError::Other(Box::new(RaftMetricsError::Internal(e.to_string())))))?;
         
