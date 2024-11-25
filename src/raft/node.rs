@@ -7,7 +7,6 @@ use raft::{
 };
 use slog::{Logger, o};
 use tracing::{info, warn};
-use protobuf::Message as PbMessage;
 
 use crate::{Result, RaftMetricsError};
 
