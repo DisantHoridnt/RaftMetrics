@@ -6,10 +6,7 @@ use raft::{
     GetEntriesContext,
     Error as RaftError,
 };
-use std::{
-    sync::{Arc, Mutex},
-    cmp,
-};
+use std::sync::{Arc, Mutex};
 
 use crate::RaftMetricsError;
 

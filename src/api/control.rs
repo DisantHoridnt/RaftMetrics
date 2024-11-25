@@ -1,23 +1,18 @@
 use axum::{
-    extract::{State, Path},
-    response::IntoResponse,
+    extract::State,
     routing::{get, post},
-    Json, Router,
+    Router,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::info;
-use tokio::net::TcpListener;
-use reqwest::Client;
-use std::env;
-use std::net::SocketAddr;
 
 use crate::{
+    Result,
     RaftMetricsError,
     metrics::MetricsRegistry,
     raft::storage::MemStorage,
     partitioning::get_partition,
-    api::worker::{MetricResponse as WorkerMetricResponse, AggregateResponse},
 };
 
 #[derive(Clone)]
@@ -25,7 +20,7 @@ pub struct ControlState {
     pub storage: Arc<MemStorage>,
     pub metrics: Arc<MetricsRegistry>,
     pub worker_urls: Arc<Vec<String>>,
-    pub http_client: Arc<Client>,
+    pub http_client: Arc<reqwest::Client>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -49,8 +44,8 @@ pub fn control_router(state: ControlState) -> Router {
         .with_state(state)
 }
 
-async fn health_check() -> impl IntoResponse {
-    Json(serde_json::json!({
+async fn health_check() -> impl axum::response::IntoResponse {
+    axum::Json(serde_json::json!({
         "status": "healthy",
         "message": "Control node is operational"
     }))
@@ -58,8 +53,8 @@ async fn health_check() -> impl IntoResponse {
 
 async fn record_metric(
     State(state): State<ControlState>,
-    Json(request): Json<MetricRequest>,
-) -> Result<impl IntoResponse, RaftMetricsError> {
+    axum::Json(request): axum::Json<MetricRequest>,
+) -> Result<impl axum::response::IntoResponse, RaftMetricsError> {
     info!("Recording metric: {} = {}", request.metric_name, request.value);
     
     let worker_count = state.worker_urls.len();
@@ -83,7 +78,7 @@ async fn record_metric(
         return Err(RaftMetricsError::Internal(format!("Worker failed to process metric: {}", error_text)));
     }
 
-    Ok(Json(MetricResponse {
+    Ok(axum::Json(MetricResponse {
         success: true,
         message: format!("Metric recorded on worker {}", partition + 1),
     }))
@@ -91,8 +86,8 @@ async fn record_metric(
 
 async fn get_metric(
     State(state): State<ControlState>,
-    Path(name): Path<String>,
-) -> Result<impl IntoResponse, RaftMetricsError> {
+    axum::extract::Path(name): axum::extract::Path<String>,
+) -> Result<impl axum::response::IntoResponse, RaftMetricsError> {
     info!("Retrieving metric: {}", name);
     
     let worker_count = state.worker_urls.len();
@@ -110,16 +105,16 @@ async fn get_metric(
         return Err(RaftMetricsError::NotFound);
     }
     
-    let metric_response: WorkerMetricResponse = response.json().await
+    let metric_response: crate::api::worker::MetricResponse = response.json().await
         .map_err(|e| RaftMetricsError::Internal(format!("Failed to parse response: {}", e)))?;
     
-    Ok(Json(metric_response))
+    Ok(axum::Json(metric_response))
 }
 
 async fn get_metric_aggregate(
     State(state): State<ControlState>,
-    Path(name): Path<String>,
-) -> Result<impl IntoResponse, RaftMetricsError> {
+    axum::extract::Path(name): axum::extract::Path<String>,
+) -> Result<impl axum::response::IntoResponse, RaftMetricsError> {
     info!("Calculating aggregate for metric: {}", name);
     
     let worker_count = state.worker_urls.len();
@@ -137,10 +132,10 @@ async fn get_metric_aggregate(
         return Err(RaftMetricsError::NotFound);
     }
     
-    let aggregate_response: AggregateResponse = response.json().await
+    let aggregate_response: crate::api::worker::AggregateResponse = response.json().await
         .map_err(|e| RaftMetricsError::Internal(format!("Failed to parse response: {}", e)))?;
     
-    Ok(Json(aggregate_response))
+    Ok(axum::Json(aggregate_response))
 }
 
 pub async fn start_control_node() {
@@ -148,7 +143,7 @@ pub async fn start_control_node() {
     let metrics = Arc::new(MetricsRegistry::new());
 
     // Parse worker URLs from environment variable
-    let worker_urls: Vec<String> = env::var("WORKER_HOSTS")
+    let worker_urls: Vec<String> = std::env::var("WORKER_HOSTS")
         .unwrap_or_else(|_| "http://localhost:8081".to_string())
         .split(',')
         .map(|host| {
@@ -166,7 +161,7 @@ pub async fn start_control_node() {
         storage: storage.clone(),
         metrics: metrics.clone(),
         worker_urls: Arc::new(worker_urls),
-        http_client: Arc::new(Client::new()),
+        http_client: Arc::new(reqwest::Client::new()),
     };
 
     let app = Router::new()
@@ -175,10 +170,10 @@ pub async fn start_control_node() {
         .route("/metrics/:name/aggregate", get(get_metric_aggregate))
         .with_state(state);
 
-    let port = env::var("PORT").unwrap_or_else(|_| "8080".to_string());
+    let port = std::env::var("PORT").unwrap_or_else(|_| "8080".to_string());
     let addr = format!("0.0.0.0:{}", port);
     info!("Starting control node on {}", addr);
 
-    let listener = TcpListener::bind(addr).await.unwrap();
+    let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
 }

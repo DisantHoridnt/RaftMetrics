@@ -9,6 +9,7 @@ use std::sync::Arc;
 use tracing::info;
 use tokio::net::TcpListener;
 use std::env;
+use chrono;
 
 use crate::{
     RaftMetricsError,
@@ -53,6 +54,23 @@ pub struct AggregateResponse {
     pub worker_id: usize,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MetricValue {
+    pub name: String,
+    pub value: f64,
+    pub timestamp: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MetricAggregateResponse {
+    pub name: String,
+    pub count: u64,
+    pub sum: f64,
+    pub average: f64,
+    pub min: f64,
+    pub max: f64,
+}
+
 pub fn worker_router(state: WorkerState) -> Router {
     Router::new()
         .route("/health", get(health_check))
@@ -94,10 +112,10 @@ async fn get_metric(
     
     let value = state.metrics.get_metric(&name).await?;
     
-    Ok(Json(MetricResponse {
-        metric_name: name,
+    Ok(Json(MetricValue {
+        name: name.clone(),
         value,
-        worker_id: state.worker_id,
+        timestamp: chrono::Utc::now().timestamp(),
     }))
 }
 
@@ -109,14 +127,13 @@ async fn get_metric_aggregate(
     
     let aggregate = state.metrics.get_metric_aggregate(&name).await?;
     
-    Ok(Json(AggregateResponse {
-        metric_name: name,
+    Ok(Json(MetricAggregateResponse {
+        name: name.clone(),
         count: aggregate.count,
         sum: aggregate.sum,
         average: aggregate.average,
         min: aggregate.min,
         max: aggregate.max,
-        worker_id: state.worker_id,
     }))
 }
 
