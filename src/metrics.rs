@@ -82,13 +82,13 @@ lazy_static! {
     ).unwrap();
 }
 
-#[derive(Clone)]
-pub struct MetricsRegistry {
-    registry: Arc<Registry>,
-    metrics: Arc<RwLock<HashMap<String, Vec<f64>>>>,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MetricValue {
+    pub value: f64,
+    pub _timestamp: i64,  
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AggregateResult {
     pub metric_name: String,
     pub count: usize,
@@ -97,6 +97,12 @@ pub struct AggregateResult {
     pub min: f64,
     pub max: f64,
     pub latest: f64,
+}
+
+#[derive(Clone)]
+pub struct MetricsRegistry {
+    registry: Arc<Registry>,
+    metrics: Arc<RwLock<HashMap<String, Vec<MetricValue>>>>,
 }
 
 impl MetricsRegistry {
@@ -121,10 +127,15 @@ impl MetricsRegistry {
     }
 
     pub async fn record_metric(&self, name: &str, value: f64) -> Result<(), RaftMetricsError> {
+        let metric_value = MetricValue {
+            value,
+            _timestamp: 0, 
+        };
+
         let mut metrics = self.metrics.write().await;
         metrics.entry(name.to_string())
             .or_insert_with(Vec::new)
-            .push(value);
+            .push(metric_value);
         
         STORAGE_OPERATIONS_TOTAL
             .with_label_values(&["write", "success"])
@@ -137,12 +148,17 @@ impl MetricsRegistry {
         &self,
         name: &str,
         value: f64,
-        timestamp: i64,
+        _timestamp: i64,
     ) -> Result<(), RaftMetricsError> {
+        let metric_value = MetricValue {
+            value,
+            _timestamp,
+        };
+
         let mut metrics = self.metrics.write().await;
         metrics.entry(name.to_string())
             .or_insert_with(Vec::new)
-            .push(value);
+            .push(metric_value);
         
         STORAGE_OPERATIONS_TOTAL
             .with_label_values(&["write", "success"])
@@ -156,7 +172,7 @@ impl MetricsRegistry {
         metrics
             .get(name)
             .and_then(|values| values.last())
-            .copied()
+            .map(|v| v.value)
             .ok_or(RaftMetricsError::NotFound)
     }
 
@@ -172,11 +188,11 @@ impl MetricsRegistry {
         }
         
         let count = values.len();
-        let sum: f64 = values.iter().sum();
+        let sum: f64 = values.iter().map(|v| v.value).sum();
         let average = sum / count as f64;
-        let min = values.iter().fold(f64::INFINITY, |a, &b| a.min(b));
-        let max = values.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
-        let latest = values.last().copied().unwrap_or(0.0);
+        let min = values.iter().map(|v| v.value).fold(f64::INFINITY, f64::min);
+        let max = values.iter().map(|v| v.value).fold(f64::NEG_INFINITY, f64::max);
+        let latest = values.last().unwrap().value;
         
         Ok(AggregateResult {
             metric_name: name.to_string(),

@@ -1,79 +1,60 @@
+use std::time::Duration;
 use raft::{
-    prelude::*,
     eraftpb::Message,
     storage::MemStorage,
-    Config,
-    StateRole,
+    Config, RawNode,
+    prelude::*,
 };
-use std::time::Duration;
-use tracing::{info, error};
 use slog::{Logger, o};
+use tracing::warn;
 
-use crate::{
-    Result,
-    RaftMetricsError,
-};
+use crate::{Result, RaftMetricsError};
 
 pub struct RaftNode {
     id: u64,
-    raw_node: RawNode<MemStorage>,
+    node: RawNode<MemStorage>,
 }
 
 impl RaftNode {
-    pub fn new(id: u64, peers: Vec<u64>) -> Result<Self> {
+    pub fn new(id: u64, _peers: Vec<u64>) -> Result<Self> {
         let storage = MemStorage::new();
         let config = Config {
             id,
-            election_tick: 10,
-            heartbeat_tick: 3,
-            max_size_per_msg: 1024 * 1024,
-            max_inflight_msgs: 256,
             ..Default::default()
         };
 
+        // Create a logger for Raft
         let logger = Logger::root(slog::Discard, o!());
-        let raw_node = RawNode::new(&config, storage, &logger)?;
+        let node = RawNode::new(&config, storage, &logger)?;
 
-        Ok(Self {
-            id,
-            raw_node,
-        })
+        Ok(Self { id, node })
+    }
+
+    pub fn get_id(&self) -> u64 {
+        self.id
     }
 
     pub fn step(&mut self, msg: Message) -> Result<()> {
-        self.raw_node
-            .step(msg)
-            .map_err(RaftMetricsError::Raft)
+        self.node.step(msg).map_err(|e| {
+            warn!("Raft step error: {}", e);
+            RaftMetricsError::Internal(format!("Raft step error: {}", e))
+        })
     }
 
     pub fn tick(&mut self) {
-        self.raw_node.tick();
-    }
-
-    pub fn propose(&mut self, data: Vec<u8>) -> Result<()> {
-        if !self.is_leader() {
-            return Err(RaftMetricsError::Request("Not the leader".to_string()));
-        }
-
-        self.raw_node
-            .propose(vec![], data)
-            .map_err(RaftMetricsError::Raft)
-    }
-
-    pub fn ready(&mut self) -> Ready {
-        self.raw_node.ready()
-    }
-
-    pub fn advance(&mut self, ready: Ready) {
-        self.raw_node.advance(ready);
+        self.node.tick();
     }
 
     pub fn has_ready(&self) -> bool {
-        self.raw_node.has_ready()
+        self.node.has_ready()
     }
 
-    pub fn is_leader(&self) -> bool {
-        self.raw_node.raft.state == StateRole::Leader
+    pub fn ready(&mut self) -> Ready {
+        self.node.ready()
+    }
+
+    pub fn advance(&mut self, ready: Ready) {
+        self.node.advance(ready);
     }
 }
 
@@ -85,12 +66,16 @@ pub async fn run_raft_node(mut node: RaftNode) {
         tokio::select! {
             _ = tick_timer.tick() => {
                 node.tick();
-                if node.has_ready() {
-                    let ready = node.ready();
-                    // Process ready state
-                    node.advance(ready);
-                }
             }
+            _ = tokio::signal::ctrl_c() => {
+                warn!("Received ctrl-c signal, shutting down Raft node {}", node.get_id());
+                break;
+            }
+        }
+
+        if node.has_ready() {
+            let ready = node.ready();
+            node.advance(ready);
         }
     }
 }

@@ -10,8 +10,6 @@ use std::{
     sync::Mutex,
 };
 
-use crate::RaftMetricsError;
-
 #[derive(Debug)]
 pub struct MemStorage {
     hard_state: Mutex<HardState>,
@@ -61,7 +59,7 @@ impl Storage for MemStorage {
         low: u64,
         high: u64,
         max_size: impl Into<Option<u64>>,
-        context: GetEntriesContext,
+        _context: GetEntriesContext,
     ) -> raft::Result<Vec<Entry>> {
         let max_size = max_size.into();
         let entries = self.entries.lock().unwrap();
@@ -110,10 +108,10 @@ impl Storage for MemStorage {
         Ok(entries.last().map_or(0, |e| e.index))
     }
 
-    fn snapshot(&self, request_index: u64, to: u64) -> raft::Result<Snapshot> {
+    fn snapshot(&self, _request_index: u64, _to: u64) -> raft::Result<Snapshot> {
         let snapshot = self.snapshot.lock().unwrap().clone();
         let meta = snapshot.get_metadata();
-        if request_index <= meta.get_index() {
+        if _request_index <= meta.get_index() {
             return Ok(snapshot);
         }
         Err(raft::Error::Store(StorageError::Unavailable))
