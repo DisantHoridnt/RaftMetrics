@@ -7,7 +7,7 @@ services:
     ports:
       - "8080:8080"
     environment:
-      - RUST_LOG=info
+      - RUST_LOG=debug
       - NODE_TYPE=control
       - NODE_ID=1
       - PORT=8080
@@ -22,7 +22,7 @@ services:
     ports:
       - "8081:8081"
     environment:
-      - RUST_LOG=info
+      - RUST_LOG=debug
       - NODE_TYPE=worker
       - NODE_ID=1
       - PORT=8081
@@ -46,7 +46,7 @@ services:
     ports:
       - "8082:8082"
     environment:
-      - RUST_LOG=info
+      - RUST_LOG=debug
       - NODE_TYPE=worker
       - NODE_ID=2
       - PORT=8082

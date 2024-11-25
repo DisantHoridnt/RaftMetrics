@@ -19,7 +19,17 @@ pub fn get_partition(metric_name: &str, num_partitions: usize) -> usize {
     metric_name.hash(&mut hasher);
     let hash = hasher.finish();
     
-    (hash % num_partitions as u64) as usize
+    // Use jump consistent hashing for better distribution
+    let mut key = hash;
+    let mut b = -1i64;
+    let mut j = 0i64;
+
+    while j < num_partitions as i64 {
+        b = j;
+        key = key.wrapping_mul(2862933555777941757).wrapping_add(1);
+        j = ((b.wrapping_add(1) as f64) * (((1u64 << 31) as f64) / ((key >> 33).wrapping_add(1)) as f64)) as i64;
+    }
+    b as usize
 }
 
 #[cfg(test)]
@@ -33,6 +43,7 @@ mod tests {
         let test_metrics = vec![
             "test1", "test2", "test3", "test4", "test5",
             "metric1", "metric2", "metric3", "metric4", "metric5",
+            "cpu_usage", "memory_usage", "disk_usage", "network_in", "network_out",
         ];
 
         let mut partition_counts = HashMap::new();
@@ -42,6 +53,16 @@ mod tests {
             
             // Verify consistent hashing - same metric always goes to same partition
             assert_eq!(partition, get_partition(metric, num_partitions));
+            
+            // Verify partition is within bounds
+            assert!(partition < num_partitions, 
+                "Partition {} should be less than num_partitions {}", 
+                partition, num_partitions);
+        }
+
+        // Print distribution
+        for (partition, count) in &partition_counts {
+            println!("Partition {}: {} metrics", partition, count);
         }
 
         // Verify metrics are somewhat evenly distributed

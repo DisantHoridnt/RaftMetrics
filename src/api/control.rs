@@ -5,7 +5,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tracing::info;
+use tracing::{info, debug};
 
 use crate::{
     Result,
@@ -63,6 +63,7 @@ async fn record_metric(
     
     let partition = get_partition(&request.metric_name, worker_count);
     let worker_url = &state.worker_urls[partition];
+    debug!("Metric '{}' hashed to partition {} ({})", request.metric_name, partition, worker_url);
     
     let response = state.http_client.post(&format!("{}/process", worker_url))
         .json(&request)
@@ -91,6 +92,7 @@ async fn get_metric(
     let worker_count = state.worker_urls.len();
     let partition = get_partition(&name, worker_count);
     let worker_url = &state.worker_urls[partition];
+    debug!("Metric '{}' hashed to partition {} ({})", name, partition, worker_url);
     
     let response = state.http_client.get(&format!("{}/metrics/{}", worker_url, name))
         .send()
@@ -118,6 +120,7 @@ async fn get_metric_aggregate(
     let worker_count = state.worker_urls.len();
     let partition = get_partition(&name, worker_count);
     let worker_url = &state.worker_urls[partition];
+    debug!("Metric '{}' hashed to partition {} ({})", name, partition, worker_url);
     
     let response = state.http_client.get(&format!("{}/metrics/{}/aggregate", worker_url, name))
         .send()
@@ -152,6 +155,8 @@ pub async fn start_control_node() {
             }
         })
         .collect();
+
+    info!("Configured worker URLs: {:?}", worker_urls);
 
     let state = ControlState {
         storage: storage.clone(),
