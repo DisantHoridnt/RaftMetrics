@@ -6,7 +6,8 @@ use raft::{
     prelude::*,
 };
 use slog::{Logger, o};
-use tracing::warn;
+use tracing::{info, warn};
+use protobuf::Message as PbMessage;
 
 use crate::{Result, RaftMetricsError};
 
@@ -16,16 +17,28 @@ pub struct RaftNode {
 }
 
 impl RaftNode {
-    pub fn new(id: u64, _peers: Vec<u64>) -> Result<Self> {
+    pub fn new(id: u64, peers: Vec<u64>) -> Result<Self> {
         let storage = MemStorage::new();
         let config = Config {
             id,
+            election_tick: 10,
+            heartbeat_tick: 3,
+            max_size_per_msg: 1024 * 1024,
+            max_inflight_msgs: 256,
+            applied: 0,
+            max_uncommitted_size: 1024 * 1024,
             ..Default::default()
         };
 
         // Create a logger for Raft
         let logger = Logger::root(slog::Discard, o!());
-        let node = RawNode::new(&config, storage, &logger)?;
+        
+        // Initialize storage with configuration
+        let mut s = storage;
+        s.wl().set_conf_state(ConfState::from((peers, vec![])));
+        
+        let node = RawNode::new(&config, s, &logger)?;
+        info!("Initialized Raft node {} with peers {:?}", id, peers);
 
         Ok(Self { id, node })
     }
@@ -56,6 +69,13 @@ impl RaftNode {
     pub fn advance(&mut self, ready: Ready) {
         self.node.advance(ready);
     }
+
+    pub fn propose(&mut self, data: Vec<u8>) -> Result<()> {
+        self.node.propose(vec![], data).map_err(|e| {
+            warn!("Failed to propose data: {}", e);
+            RaftMetricsError::Internal(format!("Failed to propose data: {}", e))
+        })
+    }
 }
 
 pub async fn run_raft_node(mut node: RaftNode) {
@@ -75,6 +95,19 @@ pub async fn run_raft_node(mut node: RaftNode) {
 
         if node.has_ready() {
             let ready = node.ready();
+            
+            // Handle messages
+            for msg in ready.messages() {
+                info!("Processing Raft message: {:?}", msg);
+            }
+            
+            // Handle committed entries
+            for entry in ready.committed_entries() {
+                if !entry.data.is_empty() {
+                    info!("Applying committed entry: {:?}", entry);
+                }
+            }
+            
             node.advance(ready);
         }
     }

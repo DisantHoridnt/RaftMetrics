@@ -30,6 +30,7 @@ services:
       - CONTROL_HOST=control:8080
       - WORKER_HOSTS=worker-1:8081,worker-2:8082
       - RAFT_ID=1
+      - RAFT_PEERS=1,2
       - RAFT_CLUSTER=worker-1:8081,worker-2:8082
       - DB_PATH=/data/worker1.duckdb
     volumes:
@@ -53,6 +54,7 @@ services:
       - CONTROL_HOST=control:8080
       - WORKER_HOSTS=worker-1:8081,worker-2:8082
       - RAFT_ID=2
+      - RAFT_PEERS=1,2
       - RAFT_CLUSTER=worker-1:8081,worker-2:8082
       - DB_PATH=/data/worker2.duckdb
     volumes:
@@ -62,12 +64,10 @@ services:
     depends_on:
       - control
 
-volumes:
-  worker1_data:
-    driver: local
-  worker2_data:
-    driver: local
-
 networks:
   raftnet:
     driver: bridge
+
+volumes:
+  worker1_data:
+  worker2_data:

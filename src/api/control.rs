@@ -71,14 +71,16 @@ async fn record_metric(
     let worker_url = &state.worker_urls[partition];
     info!("Routing metric {} to worker {}", request.metric_name, worker_url);
 
-    let response = state.http_client.post(&format!("{}/metrics", worker_url))
+    let response = state.http_client.post(&format!("{}/process", worker_url))
         .json(&request)
         .send()
         .await
         .map_err(|e| RaftMetricsError::Internal(format!("Failed to forward metric: {}", e)))?;
 
     if !response.status().is_success() {
-        return Err(RaftMetricsError::Internal("Worker failed to process metric".to_string()));
+        let error_text = response.text().await
+            .unwrap_or_else(|_| "Unknown error".to_string());
+        return Err(RaftMetricsError::Internal(format!("Worker failed to process metric: {}", error_text)));
     }
 
     Ok(Json(MetricResponse {
@@ -93,10 +95,11 @@ async fn get_metric(
 ) -> Result<impl IntoResponse, RaftMetricsError> {
     info!("Retrieving metric: {}", name);
     
-    let partition = get_partition(&name, state.worker_urls.len());
+    let worker_count = state.worker_urls.len();
+    let partition = get_partition(&name, worker_count);
     let worker_url = &state.worker_urls[partition];
     
-    info!("Fetching metric {} from worker {}", name, worker_url);
+    info!("Fetching metric {} from worker {} (partition {})", name, worker_url, partition);
     
     let response = state.http_client.get(&format!("{}/metrics/{}", worker_url, name))
         .send()
@@ -119,10 +122,11 @@ async fn get_metric_aggregate(
 ) -> Result<impl IntoResponse, RaftMetricsError> {
     info!("Calculating aggregate for metric: {}", name);
     
-    let partition = get_partition(&name, state.worker_urls.len());
+    let worker_count = state.worker_urls.len();
+    let partition = get_partition(&name, worker_count);
     let worker_url = &state.worker_urls[partition];
     
-    info!("Fetching aggregate for metric {} from worker {}", name, worker_url);
+    info!("Fetching aggregate for metric {} from worker {} (partition {})", name, worker_url, partition);
     
     let response = state.http_client.get(&format!("{}/metrics/{}/aggregate", worker_url, name))
         .send()

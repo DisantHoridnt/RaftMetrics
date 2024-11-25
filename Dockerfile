@@ -1,11 +1,12 @@
 FROM rust:1.71.1 AS builder
 
-# Install DuckDB dependencies
+# Install DuckDB and protobuf dependencies
 RUN apt-get update && apt-get install -y \
     wget \
     unzip \
     build-essential \
     cmake \
+    protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
 
 # Install DuckDB
