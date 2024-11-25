@@ -85,16 +85,18 @@ lazy_static! {
 #[derive(Clone)]
 pub struct MetricsRegistry {
     registry: Arc<Registry>,
-    metrics: Arc<RwLock<HashMap<String, f64>>>,
+    metrics: Arc<RwLock<HashMap<String, Vec<f64>>>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AggregateResult {
+    pub metric_name: String,
     pub count: usize,
     pub sum: f64,
     pub average: f64,
     pub min: f64,
     pub max: f64,
+    pub latest: f64,
 }
 
 impl MetricsRegistry {
@@ -120,7 +122,9 @@ impl MetricsRegistry {
 
     pub async fn record_metric(&self, name: &str, value: f64) -> Result<(), RaftMetricsError> {
         let mut metrics = self.metrics.write().await;
-        metrics.insert(name.to_string(), value);
+        metrics.entry(name.to_string())
+            .or_insert_with(Vec::new)
+            .push(value);
         
         STORAGE_OPERATIONS_TOTAL
             .with_label_values(&["write", "success"])
@@ -136,7 +140,9 @@ impl MetricsRegistry {
         timestamp: i64,
     ) -> Result<(), RaftMetricsError> {
         let mut metrics = self.metrics.write().await;
-        metrics.insert(name.to_string(), value);
+        metrics.entry(name.to_string())
+            .or_insert_with(Vec::new)
+            .push(value);
         
         STORAGE_OPERATIONS_TOTAL
             .with_label_values(&["write", "success"])
@@ -149,30 +155,37 @@ impl MetricsRegistry {
         let metrics = self.metrics.read().await;
         metrics
             .get(name)
+            .and_then(|values| values.last())
             .copied()
             .ok_or(RaftMetricsError::NotFound)
     }
 
-    pub async fn get_metrics_aggregate(&self) -> Result<AggregateResult, RaftMetricsError> {
+    pub async fn get_metric_aggregate(&self, name: &str) -> Result<AggregateResult, RaftMetricsError> {
         let metrics = self.metrics.read().await;
         
-        if metrics.is_empty() {
+        let values = metrics
+            .get(name)
+            .ok_or(RaftMetricsError::NotFound)?;
+            
+        if values.is_empty() {
             return Err(RaftMetricsError::NotFound);
         }
         
-        let values: Vec<f64> = metrics.values().copied().collect();
         let count = values.len();
         let sum: f64 = values.iter().sum();
         let average = sum / count as f64;
         let min = values.iter().fold(f64::INFINITY, |a, &b| a.min(b));
         let max = values.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
+        let latest = values.last().copied().unwrap_or(0.0);
         
         Ok(AggregateResult {
+            metric_name: name.to_string(),
             count,
             sum,
             average,
             min,
             max,
+            latest,
         })
     }
 
