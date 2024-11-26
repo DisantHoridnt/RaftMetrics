@@ -105,7 +105,7 @@ impl MetricsRegistry {
         aggregate.max = aggregate.max.max(value);
 
         // Persist to DuckDB
-        let mut conn = self.db.lock().await;
+        let conn = self.db.lock().await;
         conn.execute(
             "INSERT INTO metrics (name, value) VALUES (?1, ?2)",
             params![name, value],
@@ -258,7 +258,7 @@ impl MetricsRegistry {
                 let mut aggregates = self.aggregates.write().await;
                 aggregates.remove(&name);
                 
-                let mut conn = self.db.lock().await;
+                let conn = self.db.lock().await;
                 conn.execute("DELETE FROM metrics WHERE name = ?1", params![name])?;
                 conn.execute("DELETE FROM metric_aggregates WHERE name = ?1", params![name])?;
             }

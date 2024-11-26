@@ -138,7 +138,7 @@ pub async fn start_worker_node(worker_id: usize) -> Result<()> {
 
     // Set up Raft channels
     let (proposal_tx, proposal_rx) = mpsc::channel(100);
-    let (msg_tx, msg_rx) = mpsc::channel(100);
+    let (msg_tx, _msg_rx) = mpsc::channel(100);
 
     // Parse Raft cluster configuration
     let raft_cluster = env::var("RAFT_CLUSTER")
@@ -155,10 +155,10 @@ pub async fn start_worker_node(worker_id: usize) -> Result<()> {
         peers,
         msg_tx,
         metrics.clone(),
-    ).expect("Failed to create Raft node");
+    )?;
 
     // Start Raft node in background
-    tokio::spawn(run_raft_node(raft_node, proposal_rx, msg_rx));
+    tokio::spawn(run_raft_node(raft_node, proposal_rx));
 
     // Create worker state
     let state = WorkerState {

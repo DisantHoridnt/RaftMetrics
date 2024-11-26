@@ -3,14 +3,20 @@ pub mod metrics {
     tonic::include_proto!("raftmetrics.v1");
 }
 
-pub use self::metrics::*;
-
-// Re-export commonly used types
-pub use metrics::{
+// Re-export commonly used types from the generated code
+pub use self::metrics::{
     MetricEntry,
     MetricBatch,
     MetricResponse,
     RaftMessage,
-    metrics_service_client::MetricsServiceClient,
-    metrics_service_server::{MetricsService, MetricsServiceServer},
+    RecordMetricRequest,
+    RecordMetricResponse,
+    GetMetricRequest,
+    GetMetricResponse,
+    GetMetricAggregateRequest,
+    GetMetricAggregateResponse,
 };
+
+// Re-export service types
+pub use self::metrics::metrics_service_client::MetricsServiceClient;
+pub use self::metrics::metrics_service_server::{MetricsService, MetricsServiceServer};

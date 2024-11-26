@@ -14,6 +14,14 @@ pub use proto::{
     MetricBatch,
     MetricResponse,
     RaftMessage,
-    metrics_service_client::MetricsServiceClient,
-    metrics_service_server::{MetricsService, MetricsServiceServer},
+    RecordMetricRequest,
+    RecordMetricResponse,
+    GetMetricRequest,
+    GetMetricResponse,
+    GetMetricAggregateRequest,
+    GetMetricAggregateResponse,
 };
+
+// Re-export service types
+pub use proto::metrics::metrics_service_client::MetricsServiceClient;
+pub use proto::metrics::metrics_service_server::{MetricsService, MetricsServiceServer};

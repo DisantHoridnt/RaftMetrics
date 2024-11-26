@@ -1,6 +1,5 @@
 use axum::{
     extract::{State, Path},
-    response::IntoResponse,
     routing::{get, post},
     Json, Router,
 };
@@ -16,7 +15,7 @@ use chrono;
 use crate::{
     Result,
     RaftMetricsError,
-    metrics::{MetricsRegistry, MetricOperation},
+    metrics::{MetricsRegistry, MetricOperation, MetricAggregate},
     raft::{
         node::{RaftNode, run_raft_node},
         storage::MemStorage,
@@ -43,7 +42,17 @@ pub struct MetricResponse {
     pub timestamp: i64,
 }
 
-async fn control_router() -> Router {
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MetricAggregateResponse {
+    pub name: String,
+    pub count: u64,
+    pub sum: f64,
+    pub average: f64,
+    pub min: f64,
+    pub max: f64,
+}
+
+pub fn control_router() -> Router<ControlState> {
     Router::new()
         .route("/metrics", post(record_metric))
         .route("/metrics/:name", get(get_metric))
@@ -118,7 +127,7 @@ pub async fn start_control_node() -> Result<()> {
 
     // Set up Raft channels
     let (proposal_tx, proposal_rx) = mpsc::channel(100);
-    let (msg_tx, msg_rx) = mpsc::channel(100);
+    let (msg_tx, _msg_rx) = mpsc::channel(100);
 
     // Parse Raft cluster configuration
     let raft_cluster = env::var("RAFT_CLUSTER")
@@ -135,10 +144,10 @@ pub async fn start_control_node() -> Result<()> {
         peers,
         msg_tx,
         metrics.clone(),
-    ).expect("Failed to create Raft node");
+    )?;
 
     // Start Raft node in background
-    tokio::spawn(run_raft_node(raft_node, proposal_rx, msg_rx));
+    tokio::spawn(run_raft_node(raft_node, proposal_rx));
 
     // Create control state
     let state = ControlState {
@@ -148,7 +157,7 @@ pub async fn start_control_node() -> Result<()> {
     };
 
     // Start HTTP server
-    let app = control_router().await.with_state(state);
+    let app = control_router().with_state(state);
     let port = env::var("PORT").unwrap_or_else(|_| "8080".to_string());
     let addr = format!("0.0.0.0:{}", port);
     info!("Starting control node on {}", addr);
