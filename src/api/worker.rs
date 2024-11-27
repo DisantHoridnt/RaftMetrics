@@ -29,6 +29,7 @@ pub struct WorkerState {
     pub metrics: Arc<MetricsRegistry>,
     pub worker_id: usize,
     pub proposal_tx: mpsc::Sender<Vec<u8>>,
+    pub raft_node: Arc<RaftNode>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -39,9 +40,8 @@ pub struct MetricRequest {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct WorkerMetricResponse {
-    pub name: String,
-    pub value: f64,
-    pub timestamp: i64,
+    pub success: bool,
+    pub message: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -73,7 +73,7 @@ async fn health_check() -> impl IntoResponse {
 async fn process_metric(
     State(state): State<WorkerState>,
     Json(request): Json<MetricRequest>,
-) -> Result<Json<WorkerMetricResponse>> {
+) -> Result<Json<WorkerMetricResponse>, RaftMetricsError> {
     info!("Worker {} processing metric: {} = {}", 
         state.worker_id, request.metric_name, request.value);
 
@@ -91,32 +91,30 @@ async fn process_metric(
     state.metrics.record_metric(&request.metric_name, request.value).await?;
 
     Ok(Json(WorkerMetricResponse {
-        name: request.metric_name,
-        value: request.value,
-        timestamp: chrono::Utc::now().timestamp(),
+        success: true,
+        message: "Metric processed successfully".to_string(),
     }))
 }
 
 async fn get_metric(
     State(state): State<WorkerState>,
     Path(name): Path<String>,
-) -> Result<Json<WorkerMetricResponse>> {
+) -> Result<Json<WorkerMetricResponse>, RaftMetricsError> {
     info!("Worker {} retrieving metric: {}", state.worker_id, name);
     
     let value = state.metrics.get_metric(&name).await?
         .ok_or_else(|| RaftMetricsError::NotFound(format!("Metric {} not found", name)))?;
 
     Ok(Json(WorkerMetricResponse {
-        name,
-        value,
-        timestamp: chrono::Utc::now().timestamp(),
+        success: true,
+        message: format!("Value: {}", value.unwrap_or(0.0)),
     }))
 }
 
 async fn get_metric_aggregate(
     State(state): State<WorkerState>,
     Path(name): Path<String>,
-) -> Result<Json<MetricAggregateResponse>> {
+) -> Result<Json<MetricAggregateResponse>, RaftMetricsError> {
     info!("Worker {} calculating aggregate for metric: {}", state.worker_id, name);
     
     let stats = state.metrics.get_metric_aggregate(&name).await?
@@ -166,6 +164,7 @@ pub async fn start_worker_node(worker_id: usize) -> Result<()> {
         metrics: metrics.clone(),
         worker_id,
         proposal_tx,
+        raft_node: Arc::new(raft_node),
     };
 
     // Start HTTP server

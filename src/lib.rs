@@ -14,12 +14,6 @@ pub use proto::{
     MetricBatch,
     MetricResponse,
     RaftMessage,
-    RecordMetricRequest,
-    RecordMetricResponse,
-    GetMetricRequest,
-    GetMetricResponse,
-    GetMetricAggregateRequest,
-    GetMetricAggregateResponse,
 };
 
 // Re-export service types

@@ -8,6 +8,8 @@ use raft::{
     storage::MemStorage,
     Config,
     RawNode,
+    Ready,
+    Message,
 };
 use tracing::error;
 use slog::{self, Drain, o};
@@ -23,15 +25,16 @@ pub struct RaftNode {
     peers: HashMap<u64, String>,
     node: RawNode<MemStorage>,
     msg_tx: mpsc::Sender<Message>,
+    _metrics: Arc<MetricsRegistry>,
 }
 
 impl RaftNode {
-    pub fn new(
+    pub async fn new(
         id: u64, 
         peers: HashMap<u64, String>,
         msg_tx: mpsc::Sender<Message>,
         metrics: Arc<MetricsRegistry>,
-    ) -> Result<Self> {
+    ) -> Result<Self, RaftMetricsError> {
         // Create storage and initialize it
         let storage = MemStorage::new();
         let config = Config {
@@ -60,14 +63,15 @@ impl RaftNode {
             peers,
             node,
             msg_tx,
+            _metrics: metrics,
         })
     }
 
-    pub fn has_ready(&mut self) -> bool {
+    pub async fn has_ready(&mut self) -> bool {
         self.node.has_ready()
     }
 
-    async fn send_messages(&mut self) -> Result<()> {
+    async fn send_messages(&mut self) -> Result<(), RaftMetricsError> {
         let ready = self.node.ready();
         
         for msg in ready.messages() {
@@ -79,7 +83,7 @@ impl RaftNode {
         Ok(())
     }
 
-    pub async fn handle_ready(&mut self) -> Result<()> {
+    pub async fn handle_ready(&mut self) -> Result<(), RaftMetricsError> {
         let timer = RAFT_CONSENSUS_LATENCY.with_label_values(&["handle_ready"]).start_timer();
 
         let ready = self.node.ready();
@@ -109,33 +113,45 @@ impl RaftNode {
         Ok(())
     }
 
-    pub fn propose(&mut self, data: Vec<u8>) -> Result<()> {
+    pub async fn propose(&mut self, data: Vec<u8>) -> Result<(), RaftMetricsError> {
         let timer = RAFT_CONSENSUS_LATENCY.with_label_values(&["propose"]).start_timer();
         self.node.propose(vec![], data)?;
         timer.observe_duration();
         Ok(())
     }
 
-    pub fn step(&mut self, msg: Message) -> Result<()> {
+    pub async fn step(&mut self, msg: Message) -> Result<(), RaftMetricsError> {
         self.node.step(msg)?;
         Ok(())
     }
 
-    pub fn tick(&mut self) {
+    pub async fn tick(&mut self) {
         self.node.tick();
+    }
+
+    pub async fn ready(&mut self) -> Ready {
+        self.node.ready()
+    }
+
+    pub async fn advance(&mut self, ready: Ready) {
+        self.node.advance(ready);
+    }
+
+    pub async fn advance_apply(&mut self) {
+        self.node.advance_apply();
     }
 }
 
 pub async fn run_raft_node(
     mut node: RaftNode,
     mut proposal_rx: mpsc::Receiver<Vec<u8>>,
-) -> Result<()> {
+) -> Result<(), RaftMetricsError> {
     let tick_interval = Duration::from_millis(100);
     
     loop {
         tokio::select! {
             Some(data) = proposal_rx.recv() => {
-                if let Err(e) = node.propose(data) {
+                if let Err(e) = node.propose(data).await {
                     error!("Failed to propose: {}", e);
                 }
             }
@@ -144,7 +160,7 @@ pub async fn run_raft_node(
             }
         }
 
-        if node.has_ready() {
+        if node.has_ready().await {
             if let Err(e) = node.handle_ready().await {
                 error!("Failed to handle ready: {}", e);
             }

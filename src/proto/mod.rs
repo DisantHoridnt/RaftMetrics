@@ -9,12 +9,6 @@ pub use self::metrics::{
     MetricBatch,
     MetricResponse,
     RaftMessage,
-    RecordMetricRequest,
-    RecordMetricResponse,
-    GetMetricRequest,
-    GetMetricResponse,
-    GetMetricAggregateRequest,
-    GetMetricAggregateResponse,
 };
 
 // Re-export service types

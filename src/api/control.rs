@@ -27,6 +27,7 @@ pub struct ControlState {
     pub storage: Arc<MemStorage>,
     pub metrics: Arc<MetricsRegistry>,
     pub proposal_tx: mpsc::Sender<Vec<u8>>,
+    pub raft_node: Arc<RaftNode>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -62,7 +63,7 @@ pub fn control_router() -> Router<ControlState> {
 async fn record_metric(
     State(state): State<ControlState>,
     Json(request): Json<MetricRequest>,
-) -> Result<Json<MetricResponse>> {
+) -> Result<Json<MetricResponse>, RaftMetricsError> {
     info!("Recording metric: {} = {}", request.metric_name, request.value);
 
     // Create Raft operation
@@ -89,7 +90,7 @@ async fn record_metric(
 async fn get_metric(
     State(state): State<ControlState>,
     Path(name): Path<String>,
-) -> Result<Json<MetricResponse>> {
+) -> Result<Json<MetricResponse>, RaftMetricsError> {
     info!("Getting metric: {}", name);
     
     let value = state.metrics.get_metric(&name).await?
@@ -105,7 +106,7 @@ async fn get_metric(
 async fn get_metric_aggregate(
     State(state): State<ControlState>,
     Path(name): Path<String>,
-) -> Result<Json<MetricAggregateResponse>> {
+) -> Result<Json<MetricAggregateResponse>, RaftMetricsError> {
     info!("Getting metric aggregate: {}", name);
     
     let stats = state.metrics.get_metric_aggregate(&name).await?
@@ -121,7 +122,7 @@ async fn get_metric_aggregate(
     }))
 }
 
-pub async fn start_control_node() -> Result<()> {
+pub async fn start_control_node() -> Result<(), RaftMetricsError> {
     let storage = Arc::new(MemStorage::new());
     let metrics = Arc::new(MetricsRegistry::new()?);
 
@@ -154,6 +155,7 @@ pub async fn start_control_node() -> Result<()> {
         storage: storage.clone(),
         metrics: metrics.clone(),
         proposal_tx,
+        raft_node: Arc::new(raft_node),
     };
 
     // Start HTTP server
