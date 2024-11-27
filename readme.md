@@ -143,3 +143,6 @@ RUST_LOG=debug cargo run
 ```
 ## License
 This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Data Flow Architecture Diagram
+![RaftMetrics Data Flow Architecture](https://drive.google.com/uc?export=view&id=1maj3XhDEhCn9RJP9S5ftqMoCogfjuBj4)
